@@ -124,11 +124,32 @@ Location: `%APPDATA%\Claude\claude_desktop_config.json`
 
 ## OKR Authentication
 
-The OKR integration uses OAuth2 client credentials flow:
-1. Client ID and Secret are exchanged for an access token
+The OKR integration uses OAuth2 client credentials flow. You need to generate OAuth2 credentials in Planview Admin before using the OKR tools.
+
+### Generating a Bearer Token
+
+To generate OAuth2 credentials for OKR API access:
+
+1. In **Planview Admin**, on the **Settings** screen, click the **OAuth2 credentials** tab.
+2. Click **Create OAuth2 credentials**.
+3. Enter a **Name** for the credential.
+4. Click the **Application** list and select **OKRs Integration**.
+5. Click **Create OAuth2 credentials**.
+6. Copy the **Client ID** and **Client Secret** and store them in a secure location. You can click the icons to the right of each field to copy them to your clipboard.
+
+   ⚠️ **WARNING**: For security reasons, you cannot view the client secret after you click Close. If your credentials are not secure, your account can be vulnerable to unexpected or malicious actors.
+
+7. Click **Close**.
+
+### How It Works
+
+Once you have the OAuth2 credentials:
+1. The server automatically exchanges Client ID and Secret for an access token
 2. Tokens are cached and automatically refreshed when expired
 3. Tokens are valid for 1 hour and refreshed 5 minutes before expiry
 4. Automatic retry on 401 errors with fresh token
+
+Add the credentials to your `config.env` file or Claude Desktop configuration (see Configuration sections above).
 
 ## Available Tools
 
