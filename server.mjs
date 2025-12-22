@@ -19,9 +19,14 @@ import fetch from "node-fetch";
 import express from "express";
 import { z } from "zod";
 
-const API_BASE = process.env.AGILEPLACE_URL || "https://scdemo320.leankit.com/io";
+const API_BASE = process.env.AGILEPLACE_URL;
 const API_TOKEN = process.env.AGILEPLACE_TOKEN;
 const DEFAULT_BOARD_ID = process.env.AGILEPLACE_BOARD_ID;
+
+if (!API_BASE) {
+  console.error("❌ Missing AGILEPLACE_URL env var");
+  process.exit(1);
+}
 
 if (!API_TOKEN) {
   console.error("❌ Missing AGILEPLACE_TOKEN env var");
