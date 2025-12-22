@@ -1,0 +1,20 @@
+{
+  "name": "agileplace-mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "AgilePlace MCP server for batch card creation",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.18.2",
+    "dotenv": "^17.2.3",
+    "node-fetch": "^3.3.2",
+    "express": "^4.19.2",
+    "zod": "^3.22.4"
+  }
+}
