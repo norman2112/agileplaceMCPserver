@@ -45,6 +45,72 @@ OKR_FETCH_TIMEOUT_MS=25000
 node server.mjs
 ```
 
+## Claude Desktop Configuration
+
+To use this MCP server with Claude Desktop, add it to your Claude Desktop configuration file.
+
+### macOS Configuration
+
+Location: `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "agileplace": {
+      "command": "/opt/homebrew/bin/node",
+      "args": ["/path/to/your/demo/server.mjs"],
+      "env": {
+        "AGILEPLACE_URL": "https://your-instance.leankit.com/io",
+        "AGILEPLACE_TOKEN": "your-token-here",
+        "AGILEPLACE_BOARD_ID": "your-board-id",
+        "OKR_BASE_URL": "https://api-us.okrs.planview.com",
+        "OKR_CLIENT_ID": "your-oauth2-client-id",
+        "OKR_CLIENT_SECRET": "your-oauth2-client-secret",
+        "OKR_DEFAULT_LIMIT": "200",
+        "OKR_FETCH_TIMEOUT_MS": "25000"
+      }
+    }
+  }
+}
+```
+
+**Note:** If you installed Node.js via Homebrew, the path is typically `/opt/homebrew/bin/node` (Apple Silicon) or `/usr/local/bin/node` (Intel). Use `which node` to find your Node.js path.
+
+### Windows Configuration
+
+Location: `%APPDATA%\Claude\claude_desktop_config.json`  
+(Full path: `C:\Users\<YourUsername>\AppData\Roaming\Claude\claude_desktop_config.json`)
+
+```json
+{
+  "mcpServers": {
+    "agileplace": {
+      "command": "node",
+      "args": ["C:\\path\\to\\your\\demo\\server.mjs"],
+      "env": {
+        "AGILEPLACE_URL": "https://your-instance.leankit.com/io",
+        "AGILEPLACE_TOKEN": "your-token-here",
+        "AGILEPLACE_BOARD_ID": "your-board-id",
+        "OKR_BASE_URL": "https://api-us.okrs.planview.com",
+        "OKR_CLIENT_ID": "your-oauth2-client-id",
+        "OKR_CLIENT_SECRET": "your-oauth2-client-secret",
+        "OKR_DEFAULT_LIMIT": "200",
+        "OKR_FETCH_TIMEOUT_MS": "25000"
+      }
+    }
+  }
+}
+```
+
+**Note:** On Windows, use double backslashes (`\\`) in file paths, or forward slashes (`/`). Ensure Node.js is in your system PATH, or use the full path to `node.exe`.
+
+### Configuration Notes
+
+- Replace `/path/to/your/demo/server.mjs` with the actual path to your `server.mjs` file
+- All environment variables from `config.env` can be set in the `env` section
+- The server will read from environment variables first, then fall back to `config.env` if not set
+- Restart Claude Desktop after modifying the configuration file
+
 ## OKR Authentication
 
 The OKR integration uses OAuth2 client credentials flow:
