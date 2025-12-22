@@ -18,12 +18,23 @@ An MCP (Model Context Protocol) server that provides tools for interacting with 
 - Get key results for specific objectives
 - Automatic OAuth2 token management with caching and refresh
 
+## Prerequisites
+
+- **Node.js** (version 18 or higher recommended)
+  - macOS/Linux: Install via [Homebrew](https://brew.sh/) or [nvm](https://github.com/nvm-sh/nvm)
+  - Windows: Download from [nodejs.org](https://nodejs.org/) or use [nvm-windows](https://github.com/coreybutler/nvm-windows)
+  - Verify installation: `node --version` and `npm --version`
+
+- **npm** (comes with Node.js, but verify: `npm --version`)
+
 ## Setup
 
 1. Install dependencies:
 ```bash
 npm install
 ```
+
+**Note:** This command works on both macOS/Linux (Terminal) and Windows (CMD/PowerShell). The dependencies will be installed in the `node_modules/` directory.
 
 2. Configure environment variables in `config.env`:
 ```env
