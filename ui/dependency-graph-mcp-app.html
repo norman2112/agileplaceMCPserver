@@ -1,0 +1,1252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgilePlace Dependency Graph</title>
+    
+    <!-- Load D3.js from CDN -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a1a;
+            color: #ffffff;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+            background: #1a1a1a;
+        }
+
+        /* Sidebar Styles */
+        .sidebar {
+            width: 320px;
+            background: #0a0a0a;
+            border-right: 1px solid #1a1a1a;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid #1a1a1a;
+        }
+
+        .sidebar-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #ffffff;
+        }
+
+        .sidebar-stats {
+            display: flex;
+            gap: 15px;
+            font-size: 12px;
+            color: #888;
+        }
+
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .stat-value {
+            color: #fff;
+            font-weight: 600;
+        }
+
+        .sidebar-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+        }
+
+        .section {
+            margin-bottom: 25px;
+        }
+
+        .section-title {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: #666;
+            margin-bottom: 10px;
+            letter-spacing: 0.5px;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .filter-btn {
+            padding: 8px 12px;
+            background: #0a0a0a;
+            border: 1px solid #1a1a1a;
+            color: #888;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+            text-align: left;
+        }
+
+        .filter-btn:hover {
+            background: #1a1a1a;
+            border-color: #333;
+            color: #fff;
+        }
+
+        .filter-btn.active {
+            background: #1a1a1a;
+            border-color: #666;
+            color: #fff;
+        }
+
+        .card-list-item {
+            padding: 10px;
+            background: #0a0a0a;
+            border: 1px solid #1a1a1a;
+            border-left: 3px solid #666;
+            border-radius: 4px;
+            margin-bottom: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .card-list-item:hover {
+            background: #1a1a1a;
+            border-left-color: #fff;
+            transform: translateX(3px);
+        }
+
+        .card-list-item.selected {
+            background: #1a1a1a;
+            border-left-color: #fff;
+        }
+
+        .card-list-item.blocked {
+            border-left-color: #ff4444;
+        }
+
+        .card-list-title {
+            font-size: 13px;
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+
+        .card-list-meta {
+            font-size: 11px;
+            color: #666;
+        }
+
+        /* Main Canvas Styles */
+        .main-canvas {
+            flex: 1;
+            position: relative;
+            background: #1a1a1a;
+        }
+
+        .canvas-header {
+            padding: 20px;
+            background: #0a0a0a;
+            border-bottom: 1px solid #1a1a1a;
+        }
+
+        .canvas-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+
+        .canvas-subtitle {
+            font-size: 13px;
+            color: #666;
+        }
+
+        #graph-container {
+            width: 100%;
+            height: calc(100vh - 80px);
+            position: relative;
+        }
+
+        svg {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Node Styles */
+        .node {
+            cursor: move;
+        }
+
+        .node:hover .node-circle {
+            stroke-width: 3;
+            filter: brightness(1.3);
+        }
+
+        .node.selected .node-circle {
+            stroke-width: 3;
+            filter: brightness(1.5);
+        }
+
+        .node-circle {
+            fill: #1a1a1a;
+            stroke: #666;
+            stroke-width: 2;
+            transition: all 0.2s;
+        }
+
+        .node-circle.blocked {
+            stroke: #ff4444;
+            fill: #1a0000;
+        }
+
+        .node-circle.high-priority {
+            stroke: #ff6666;
+        }
+
+        .node-circle.medium-priority {
+            stroke: #ffaa44;
+        }
+
+        .node-circle.milestone {
+            stroke: #44ff88;
+            fill: #001a0a;
+        }
+
+        .node-text {
+            fill: #ffffff;
+            font-size: 11px;
+            font-weight: 500;
+            pointer-events: none;
+            text-anchor: middle;
+            user-select: none;
+        }
+
+        .node-label {
+            fill: #cccccc;
+            font-size: 12px;
+            font-weight: 600;
+            pointer-events: none;
+            text-anchor: middle;
+            user-select: none;
+        }
+
+        /* Edge Styles */
+        .edge {
+            fill: none;
+            stroke-width: 2;
+            transition: all 0.2s;
+        }
+
+        .edge.dependency {
+            stroke: #ff4444;
+            stroke-dasharray: 0;
+        }
+
+        .edge.parent-child {
+            stroke: #666666;
+            stroke-dasharray: 5, 5;
+        }
+
+        .edge.highlighted {
+            stroke-width: 3;
+            filter: drop-shadow(0 0 4px currentColor);
+        }
+
+        /* Controls */
+        .controls {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            z-index: 100;
+        }
+
+        .control-btn {
+            width: 44px;
+            height: 44px;
+            background: #0a0a0a;
+            border: 1px solid #1a1a1a;
+            border-radius: 8px;
+            color: #fff;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            transition: all 0.2s;
+        }
+
+        .control-btn:hover {
+            background: #1a1a1a;
+            border-color: #333;
+        }
+
+        /* Legend */
+        .legend {
+            position: absolute;
+            top: 100px;
+            right: 20px;
+            background: #0a0a0a;
+            border: 1px solid #1a1a1a;
+            border-radius: 8px;
+            padding: 15px;
+            z-index: 50;
+        }
+
+        .legend-title {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: #666;
+            margin-bottom: 10px;
+            letter-spacing: 0.5px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 8px;
+            font-size: 12px;
+        }
+
+        .legend-line {
+            width: 24px;
+            height: 2px;
+        }
+
+        .legend-circle {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            border: 2px solid;
+        }
+
+        /* Tooltip */
+        .tooltip {
+            position: absolute;
+            background: rgba(10, 10, 10, 0.98);
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 12px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+            z-index: 200;
+            max-width: 320px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+        }
+
+        .tooltip.visible {
+            opacity: 1;
+        }
+
+        .tooltip-title {
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 14px;
+            color: #fff;
+        }
+
+        .tooltip-section {
+            margin-bottom: 8px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #1a1a1a;
+        }
+
+        .tooltip-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+
+        .tooltip-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            color: #666;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .tooltip-value {
+            font-size: 12px;
+            color: #ccc;
+        }
+
+        /* Loading State */
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #666;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #1a1a1a;
+            border-top-color: #666;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Scrollbar Styles */
+        .sidebar-content::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .sidebar-content::-webkit-scrollbar-track {
+            background: #0a0a0a;
+        }
+
+        .sidebar-content::-webkit-scrollbar-thumb {
+            background: #1a1a1a;
+            border-radius: 3px;
+        }
+
+        .sidebar-content::-webkit-scrollbar-thumb:hover {
+            background: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-title">Dependency Graph</div>
+                <div class="sidebar-stats">
+                    <div class="stat-item">
+                        <span>📊</span>
+                        <span class="stat-value" id="total-cards">0</span>
+                        <span>cards</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>🔗</span>
+                        <span class="stat-value" id="total-edges">0</span>
+                        <span>edges</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-content">
+                <!-- Filters Section -->
+                <div class="section">
+                    <div class="section-title">Filter by Status</div>
+                    <div class="filter-group">
+                        <button class="filter-btn active" data-filter="all">All Cards</button>
+                        <button class="filter-btn" data-filter="blocked">Blocked Only</button>
+                        <button class="filter-btn" data-filter="dependencies">Has Dependencies</button>
+                        <button class="filter-btn" data-filter="isolated">No Dependencies</button>
+                    </div>
+                </div>
+
+                <!-- Priority Filter -->
+                <div class="section">
+                    <div class="section-title">Filter by Priority</div>
+                    <div class="filter-group">
+                        <button class="filter-btn active" data-priority="all">All Priorities</button>
+                        <button class="filter-btn" data-priority="high">High Priority</button>
+                        <button class="filter-btn" data-priority="normal">Normal Priority</button>
+                        <button class="filter-btn" data-priority="low">Low Priority</button>
+                    </div>
+                </div>
+
+                <!-- Card List -->
+                <div class="section">
+                    <div class="section-title">Cards</div>
+                    <div id="card-list"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Canvas -->
+        <div class="main-canvas">
+            <div class="canvas-header">
+                <div class="canvas-title" id="board-title">Loading Board...</div>
+                <div class="canvas-subtitle" id="board-subtitle">Fetching dependency graph...</div>
+            </div>
+
+            <div id="graph-container">
+                <div class="loading" id="loading">
+                    <div class="spinner"></div>
+                    <div>Loading graph data...</div>
+                </div>
+            </div>
+
+            <!-- Legend -->
+            <div class="legend">
+                <div class="legend-title">Legend</div>
+                <div class="legend-item">
+                    <div class="legend-line" style="background: #ff4444;"></div>
+                    <span>Dependency (Blocks)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-line" style="background: #666; border-top: 2px dashed #666;"></div>
+                    <span>Parent-Child</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-circle" style="border-color: #ff4444; background: #1a0000;"></div>
+                    <span>Blocked Card</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-circle" style="border-color: #44ff88; background: #001a0a;"></div>
+                    <span>Milestone</span>
+                </div>
+            </div>
+
+            <!-- Controls -->
+            <div class="controls">
+                <button class="control-btn" id="auto-layout" title="Auto Layout">⚡</button>
+                <button class="control-btn" id="reset-view" title="Reset View">⟲</button>
+                <button class="control-btn" id="zoom-in" title="Zoom In">+</button>
+                <button class="control-btn" id="zoom-out" title="Zoom Out">−</button>
+            </div>
+
+            <!-- Tooltip -->
+            <div class="tooltip" id="tooltip">
+                <div class="tooltip-title" id="tooltip-title"></div>
+                <div id="tooltip-content"></div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        // Import MCP App SDK with error handling
+        let App;
+        let app;
+        let sdkLoaded = false;
+        
+        try {
+            const module = await import("https://esm.sh/@modelcontextprotocol/ext-apps@latest");
+            App = module.App;
+            sdkLoaded = true;
+            console.log('MCP Apps SDK loaded successfully');
+        } catch (error) {
+            console.error('Failed to load MCP Apps SDK:', error);
+            // Show error on page
+            document.body.innerHTML = `
+                <div style="padding: 50px; color: #ff4444; font-family: monospace;">
+                    <h1>❌ SDK Load Error</h1>
+                    <p>Failed to load MCP Apps SDK: ${error.message}</p>
+                    <p>Check browser console for details.</p>
+                </div>
+            `;
+            throw error;
+        }
+        
+        // Initialize MCP App
+        app = new App();
+        let graphData = { nodes: [], edges: [] };
+        let simulation, svg, g, link, node;
+        let selectedNode = null;
+        let transform = d3.zoomIdentity;
+
+        // Initialize MCP App connection
+        async function initialize() {
+            try {
+                console.log('Initializing MCP App...');
+                if (app.log) {
+                    app.log("info", "Connecting to Claude Desktop...");
+                }
+                await app.connect();
+                console.log('MCP App connected');
+                if (app.log) {
+                    app.log("info", "MCP App connected successfully");
+                }
+
+                // Receive tool results from the host
+                app.ontoolresult = (result) => {
+                    console.log('Tool result received:', result);
+                    if (app.log) {
+                        app.log("info", "Tool result received", { 
+                            hasStructuredContent: !!result.structuredContent,
+                            hasData: !!result.data,
+                            keys: result ? Object.keys(result) : []
+                        });
+                    }
+                    
+                    // Extract graph data from result - structuredContent is the primary source
+                    let data = result.structuredContent || result.data || result;
+                    
+                    // Fallback: Handle MCP content array format if structuredContent not available
+                    if (!data && result.content && Array.isArray(result.content)) {
+                        const textContent = result.content.find(c => c.type === 'text');
+                        if (textContent && textContent.text) {
+                            try {
+                                data = JSON.parse(textContent.text);
+                                if (app.log) app.log("info", "Parsed JSON from content array");
+                            } catch (e) {
+                                console.error('Failed to parse JSON:', e);
+                                if (app.log) app.log("error", "Failed to parse JSON", { error: e.message });
+                                showError('Invalid data format');
+                                return;
+                            }
+                        }
+                    }
+                    
+                    if (data && (data.nodes || data.edges)) {
+                        console.log('Valid graph data received');
+                        if (app.log) {
+                            app.log("info", "Valid graph data received", {
+                                nodes: data.nodes?.length || 0,
+                                edges: data.edges?.length || 0
+                            });
+                        }
+                        loadGraphData(data);
+                    } else {
+                        console.error('Invalid graph data structure:', data);
+                        if (app.log) {
+                            app.log("error", "Invalid graph data structure", {
+                                hasData: !!data,
+                                dataKeys: data ? Object.keys(data) : []
+                            });
+                        }
+                        showError('Invalid graph data received - missing nodes or edges');
+                    }
+                };
+
+                // Send ready signal
+                await app.ready();
+                console.log('MCP App ready');
+                if (app.log) {
+                    app.log("info", "MCP App ready, waiting for tool results...");
+                }
+                
+            } catch (error) {
+                console.error('Failed to initialize MCP App:', error);
+                if (app.log) {
+                    app.log("error", "Failed to initialize MCP App", { error: error.message });
+                }
+                showError('Failed to connect to Claude Desktop: ' + error.message);
+            }
+        }
+
+        // Load and process graph data
+        function loadGraphData(data) {
+            console.log('Loading graph data:', data);
+            if (app.log) {
+                app.log("info", "Loading graph data", {
+                    nodeCount: data.nodes?.length || 0,
+                    edgeCount: data.edges?.length || 0
+                });
+            }
+            
+            graphData = {
+                nodes: data.nodes || [],
+                edges: data.edges || []
+            };
+            
+            if (graphData.nodes.length === 0) {
+                console.warn('No nodes to render');
+                if (app.log) {
+                    app.log("warn", "No nodes to render");
+                }
+                showError('No cards found in graph data');
+                return;
+            }
+            
+            // Update UI
+            try {
+                updateStats();
+                updateCardList();
+                renderGraph();
+                updateHeader(data);
+                
+                // Hide loading
+                const loadingEl = document.querySelector('.loading');
+                if (loadingEl) {
+                    loadingEl.style.display = 'none';
+                }
+                
+                console.log('Graph rendered successfully');
+                if (app.log) {
+                    app.log("info", "Graph rendered successfully", {
+                        nodes: graphData.nodes.length,
+                        edges: graphData.edges.length
+                    });
+                }
+            } catch (error) {
+                console.error('Error rendering graph:', error);
+                if (app.log) {
+                    app.log("error", "Error rendering graph", { error: error.message });
+                }
+                showError(`Failed to render graph: ${error.message}`);
+            }
+        }
+
+        // Update statistics
+        function updateStats() {
+            document.getElementById('total-cards').textContent = graphData.nodes.length;
+            document.getElementById('total-edges').textContent = graphData.edges.length;
+        }
+
+        // Update header with board info
+        function updateHeader(data) {
+            const stats = data.statistics || {};
+            document.getElementById('board-title').textContent = `Board Dependency Graph`;
+            const depsTotal = (stats.dependencies?.total || 0) + (stats.parentChild?.total || 0);
+            document.getElementById('board-subtitle').textContent = 
+                `${stats.totalCards || 0} cards • ${depsTotal} relationships • ${stats.blockedCards || 0} blocked`;
+        }
+
+        // Update card list in sidebar
+        function updateCardList() {
+            const container = document.getElementById('card-list');
+            container.innerHTML = '';
+            
+            graphData.nodes.forEach(node => {
+                const item = document.createElement('div');
+                item.className = 'card-list-item';
+                if (node.isBlocked) item.classList.add('blocked');
+                
+                item.innerHTML = `
+                    <div class="card-list-title">${escapeHtml(node.title)}</div>
+                    <div class="card-list-meta">${node.laneName || 'No lane'} • ${node.priority || 'normal'}</div>
+                `;
+                
+                item.addEventListener('click', () => {
+                    selectNodeById(node.id);
+                });
+                
+                container.appendChild(item);
+            });
+        }
+
+        // Render D3 force-directed graph
+        function renderGraph() {
+            const container = document.getElementById('graph-container');
+            
+            if (!container) {
+                console.error('Graph container not found');
+                if (app.log) app.log("error", "Graph container not found");
+                showError('Graph container not found');
+                return;
+            }
+            
+            const width = container.clientWidth || 800;
+            const height = container.clientHeight || 600;
+            
+            if (width === 0 || height === 0) {
+                setTimeout(() => {
+                    const newWidth = container.clientWidth || 800;
+                    const newHeight = container.clientHeight || 600;
+                    if (newWidth > 0 && newHeight > 0) {
+                        renderGraph();
+                    }
+                }, 100);
+                return;
+            }
+            
+            if (typeof d3 === 'undefined') {
+                console.error('D3.js is not loaded');
+                if (app.log) app.log("error", "D3.js is not loaded");
+                showError('D3.js library failed to load');
+                return;
+            }
+            
+            // Clear existing SVG
+            d3.select('#graph-container svg').remove();
+            
+            // Create SVG
+            svg = d3.select('#graph-container')
+                .append('svg')
+                .attr('width', width)
+                .attr('height', height);
+            
+            // Create zoom behavior
+            const zoom = d3.zoom()
+                .scaleExtent([0.1, 4])
+                .on('zoom', (event) => {
+                    transform = event.transform;
+                    g.attr('transform', transform);
+                });
+            
+            svg.call(zoom);
+            
+            // Create container group
+            g = svg.append('g');
+            
+            // Define arrow markers
+            const defs = svg.append('defs');
+            
+            defs.append('marker')
+                .attr('id', 'arrowhead-dependency')
+                .attr('viewBox', '0 0 10 10')
+                .attr('refX', 25)
+                .attr('refY', 5)
+                .attr('markerWidth', 6)
+                .attr('markerHeight', 6)
+                .attr('orient', 'auto')
+                .append('path')
+                .attr('d', 'M 0 0 L 10 5 L 0 10 z')
+                .attr('fill', '#ff4444');
+            
+            defs.append('marker')
+                .attr('id', 'arrowhead-parent-child')
+                .attr('viewBox', '0 0 10 10')
+                .attr('refX', 25)
+                .attr('refY', 5)
+                .attr('markerWidth', 6)
+                .attr('markerHeight', 6)
+                .attr('orient', 'auto')
+                .append('path')
+                .attr('d', 'M 0 0 L 10 5 L 0 10 z')
+                .attr('fill', '#666');
+            
+            // Prepare edges with source/target objects
+            const edgesWithObjects = graphData.edges.map(e => {
+                const sourceId = e.from || e.source?.id || e.source;
+                const targetId = e.to || e.target?.id || e.target;
+                const sourceNode = graphData.nodes.find(n => 
+                    n.id === sourceId || String(n.id) === String(sourceId)
+                );
+                const targetNode = graphData.nodes.find(n => 
+                    n.id === targetId || String(n.id) === String(targetId)
+                );
+                
+                if (!sourceNode || !targetNode) {
+                    return null;
+                }
+                
+                return {
+                    ...e,
+                    source: sourceNode,
+                    target: targetNode
+                };
+            }).filter(e => e !== null && e.source && e.target);
+            
+            // Create force simulation
+            simulation = d3.forceSimulation(graphData.nodes)
+                .force('link', d3.forceLink(edgesWithObjects)
+                    .id(d => d.id)
+                    .distance(150))
+                .force('charge', d3.forceManyBody().strength(-300))
+                .force('center', d3.forceCenter(width / 2, height / 2))
+                .force('collision', d3.forceCollide().radius(50));
+            
+            // Create links (edges)
+            link = g.append('g')
+                .selectAll('path')
+                .data(edgesWithObjects)
+                .join('path')
+                .attr('class', d => {
+                    const edgeClass = d.type === 'parent' ? 'parent-child' : 'dependency';
+                    return `edge ${edgeClass}`;
+                })
+                .attr('marker-end', d => 
+                    d.type === 'parent' ? 'url(#arrowhead-parent-child)' : 'url(#arrowhead-dependency)'
+                );
+            
+            // Create nodes
+            const nodeGroup = g.append('g')
+                .selectAll('g')
+                .data(graphData.nodes)
+                .join('g')
+                .attr('class', 'node')
+                .call(drag(simulation))
+                .on('click', async (event, d) => {
+                    event.stopPropagation();
+                    await selectNode(d);
+                })
+                .on('mouseover', (event, d) => showTooltip(event, d))
+                .on('mouseout', hideTooltip);
+            
+            // Add circles to nodes
+            nodeGroup.append('circle')
+                .attr('class', d => {
+                    let classes = 'node-circle';
+                    if (d.isBlocked) classes += ' blocked';
+                    if (d.priority === 'high' || d.priority === 'critical') classes += ' high-priority';
+                    if (d.priority === 'normal') classes += ' medium-priority';
+                    if (d.cardType?.includes('Milestone')) classes += ' milestone';
+                    return classes;
+                })
+                .attr('r', 20);
+            
+            // Add text to nodes (abbreviated)
+            nodeGroup.append('text')
+                .attr('class', 'node-text')
+                .attr('dy', 4)
+                .text(d => {
+                    const words = d.title.split(' ');
+                    return words.length > 2 ? `${words[0]} ${words[1]}...` : d.title.substring(0, 15);
+                });
+            
+            // Add labels below nodes
+            nodeGroup.append('text')
+                .attr('class', 'node-label')
+                .attr('dy', 35)
+                .text(d => truncate(d.title, 20));
+            
+            node = nodeGroup;
+            
+            // Update positions on simulation tick
+            simulation.on('tick', () => {
+                link.attr('d', d => {
+                    if (!d.source || !d.target || d.source.x === undefined || d.target.x === undefined) {
+                        return '';
+                    }
+                    const dx = d.target.x - d.source.x;
+                    const dy = d.target.y - d.source.y;
+                    const dr = Math.sqrt(dx * dx + dy * dy);
+                    return `M${d.source.x},${d.source.y}A${dr},${dr} 0 0,1 ${d.target.x},${d.target.y}`;
+                });
+                
+                node.attr('transform', d => {
+                    if (d.x === undefined || d.y === undefined) {
+                        return 'translate(0,0)';
+                    }
+                    return `translate(${d.x},${d.y})`;
+                });
+            });
+            
+            // Start the simulation
+            simulation.alpha(1).restart();
+            
+            // Click on background to deselect
+            svg.on('click', () => {
+                if (selectedNode) {
+                    deselectNode();
+                }
+            });
+        }
+
+        // Drag behavior
+        function drag(simulation) {
+            function dragstarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+            
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+            
+            function dragended(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                d.fx = null;
+                d.fy = null;
+            }
+            
+            return d3.drag()
+                .on('start', dragstarted)
+                .on('drag', dragged)
+                .on('end', dragended);
+        }
+
+        // Select node - calls server tool to get full card details
+        async function selectNode(d) {
+            selectedNode = d;
+            
+            // Update visual selection
+            node.classed('selected', n => n.id === d.id);
+            
+            // Highlight connected edges
+            link.classed('highlighted', l => 
+                (l.source.id || l.source) === d.id || (l.target.id || l.target) === d.id
+            );
+            
+            // Update sidebar
+            document.querySelectorAll('.card-list-item').forEach((item, i) => {
+                if (graphData.nodes[i].id === d.id) {
+                    item.classList.add('selected');
+                    item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                } else {
+                    item.classList.remove('selected');
+                }
+            });
+            
+            // Call server tool to get full card relationships
+            try {
+                if (app.log) app.log("info", "Fetching card relationships", { cardId: d.id });
+                const response = await app.callServerTool({
+                    name: "get_card_relationships",
+                    arguments: { cardId: d.id }
+                });
+                if (app.log) app.log("info", "Card relationships received", { cardId: d.id });
+            } catch (error) {
+                console.error('Failed to fetch card relationships:', error);
+                if (app.log) {
+                    app.log("error", "Failed to fetch card relationships", { 
+                        cardId: d.id, 
+                        error: error.message 
+                    });
+                }
+            }
+            
+            // Update Claude's context
+            try {
+                await app.updateModelContext({
+                    content: [{
+                        type: 'text',
+                        text: `User examining card: "${d.title}" (ID: ${d.id}, Lane: ${d.laneName}, Priority: ${d.priority})`
+                    }]
+                });
+            } catch (error) {
+                console.error('Failed to update model context:', error);
+                if (app.log) app.log("error", "Failed to update model context", { error: error.message });
+            }
+        }
+
+        // Deselect node
+        function deselectNode() {
+            selectedNode = null;
+            node.classed('selected', false);
+            link.classed('highlighted', false);
+            document.querySelectorAll('.card-list-item').forEach(item => {
+                item.classList.remove('selected');
+            });
+        }
+
+        // Select node by ID
+        function selectNodeById(id) {
+            const nodeData = graphData.nodes.find(n => n.id === id || String(n.id) === String(id));
+            if (nodeData) {
+                selectNode(nodeData);
+                
+                // Zoom to node
+                if (nodeData.x !== undefined && nodeData.y !== undefined) {
+                    const scale = 1.5;
+                    const x = -nodeData.x * scale + svg.node().clientWidth / 2;
+                    const y = -nodeData.y * scale + svg.node().clientHeight / 2;
+                    
+                    svg.transition()
+                        .duration(750)
+                        .call(
+                            d3.zoom().transform,
+                            d3.zoomIdentity.translate(x, y).scale(scale)
+                        );
+                }
+            }
+        }
+
+        // Show tooltip
+        function showTooltip(event, d) {
+            const tooltip = document.getElementById('tooltip');
+            const title = document.getElementById('tooltip-title');
+            const content = document.getElementById('tooltip-content');
+            
+            title.textContent = d.title;
+            
+            const dependencies = graphData.edges.filter(e => {
+                const sourceId = e.source?.id || e.source || e.from;
+                const targetId = e.target?.id || e.target || e.to;
+                return sourceId === d.id || targetId === d.id;
+            });
+            
+            content.innerHTML = `
+                <div class="tooltip-section">
+                    <div class="tooltip-label">Status</div>
+                    <div class="tooltip-value">${d.laneName || 'Unknown'}</div>
+                </div>
+                <div class="tooltip-section">
+                    <div class="tooltip-label">Priority</div>
+                    <div class="tooltip-value">${d.priority || 'normal'}</div>
+                </div>
+                <div class="tooltip-section">
+                    <div class="tooltip-label">Dependencies</div>
+                    <div class="tooltip-value">${dependencies.length} connection(s)</div>
+                </div>
+                ${d.isBlocked ? '<div class="tooltip-section"><div class="tooltip-value" style="color: #ff4444;">⚠️ BLOCKED</div></div>' : ''}
+            `;
+            
+            tooltip.style.left = (event.pageX + 15) + 'px';
+            tooltip.style.top = (event.pageY + 15) + 'px';
+            tooltip.classList.add('visible');
+        }
+
+        // Hide tooltip
+        function hideTooltip() {
+            document.getElementById('tooltip').classList.remove('visible');
+        }
+
+        // Control buttons
+        document.getElementById('auto-layout').addEventListener('click', async () => {
+            simulation.alpha(1).restart();
+            try {
+                await app.updateModelContext({
+                    content: [{ type: 'text', text: 'User applied auto-layout to graph' }]
+                });
+            } catch (error) {
+                console.error('Failed to update model context:', error);
+                if (app.log) app.log("error", "Failed to update model context", { error: error.message });
+            }
+        });
+
+        document.getElementById('reset-view').addEventListener('click', () => {
+            svg.transition()
+                .duration(750)
+                .call(d3.zoom().transform, d3.zoomIdentity);
+        });
+
+        document.getElementById('zoom-in').addEventListener('click', () => {
+            svg.transition().call(d3.zoom().scaleBy, 1.3);
+        });
+
+        document.getElementById('zoom-out').addEventListener('click', () => {
+            svg.transition().call(d3.zoom().scaleBy, 0.7);
+        });
+
+        // Filter buttons
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const filterType = btn.dataset.filter || btn.dataset.priority;
+                
+                // Update active state
+                btn.parentElement.querySelectorAll('.filter-btn').forEach(b => 
+                    b.classList.remove('active')
+                );
+                btn.classList.add('active');
+                
+                // Apply filter
+                applyFilter(filterType, btn.dataset.filter ? 'filter' : 'priority');
+                
+                // Update Claude's context
+                try {
+                    await app.updateModelContext({
+                        content: [{
+                            type: 'text',
+                            text: `User filtered graph by ${btn.dataset.filter ? 'filter' : 'priority'}: ${filterType}`
+                        }]
+                    });
+                } catch (error) {
+                    console.error('Failed to update model context:', error);
+                    if (app.log) app.log("error", "Failed to update model context", { error: error.message });
+                }
+            });
+        });
+
+        // Apply filters
+        function applyFilter(value, type) {
+            if (type === 'filter') {
+                switch(value) {
+                    case 'all':
+                        node.style('opacity', 1);
+                        link.style('opacity', 1);
+                        break;
+                    case 'blocked':
+                        node.style('opacity', d => d.isBlocked ? 1 : 0.2);
+                        link.style('opacity', 0.2);
+                        break;
+                    case 'dependencies':
+                        const connectedNodes = new Set();
+                        graphData.edges.forEach(e => {
+                            const sourceId = e.source?.id || e.source || e.from;
+                            const targetId = e.target?.id || e.target || e.to;
+                            connectedNodes.add(sourceId);
+                            connectedNodes.add(targetId);
+                        });
+                        node.style('opacity', d => connectedNodes.has(d.id) ? 1 : 0.2);
+                        link.style('opacity', 1);
+                        break;
+                    case 'isolated':
+                        const connected = new Set();
+                        graphData.edges.forEach(e => {
+                            const sourceId = e.source?.id || e.source || e.from;
+                            const targetId = e.target?.id || e.target || e.to;
+                            connected.add(sourceId);
+                            connected.add(targetId);
+                        });
+                        node.style('opacity', d => !connected.has(d.id) ? 1 : 0.2);
+                        link.style('opacity', 0.2);
+                        break;
+                }
+            } else if (type === 'priority') {
+                if (value === 'all') {
+                    node.style('opacity', 1);
+                    link.style('opacity', 1);
+                } else {
+                    node.style('opacity', d => d.priority === value ? 1 : 0.2);
+                    link.style('opacity', 0.3);
+                }
+            }
+        }
+
+        // Utility functions
+        function truncate(str, maxLen) {
+            return str.length > maxLen ? str.substring(0, maxLen) + '...' : str;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function showError(message) {
+            const loadingEl = document.querySelector('.loading');
+            if (loadingEl) {
+                loadingEl.innerHTML = `
+                    <div style="color: #ff4444;">❌ ${message}</div>
+                `;
+            }
+        }
+
+        // Initialize when DOM is ready
+        // Add error handling to catch any initialization errors
+        window.addEventListener('error', (event) => {
+            console.error('Global error:', event.error);
+            const loadingEl = document.querySelector('.loading');
+            if (loadingEl) {
+                loadingEl.innerHTML = `
+                    <div style="color: #ff4444;">
+                        <h3>❌ JavaScript Error</h3>
+                        <p>${event.error?.message || 'Unknown error'}</p>
+                        <pre style="font-size: 10px; margin-top: 10px;">${event.error?.stack || ''}</pre>
+                    </div>
+                `;
+            }
+        });
+
+        // Also catch unhandled promise rejections
+        window.addEventListener('unhandledrejection', (event) => {
+            console.error('Unhandled promise rejection:', event.reason);
+            const loadingEl = document.querySelector('.loading');
+            if (loadingEl) {
+                loadingEl.innerHTML = `
+                    <div style="color: #ff4444;">
+                        <h3>❌ Promise Rejection</h3>
+                        <p>${event.reason?.message || String(event.reason)}</p>
+                    </div>
+                `;
+            }
+        });
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initialize);
+        } else {
+            initialize();
+        }
+    </script>
+</body>
+</html>

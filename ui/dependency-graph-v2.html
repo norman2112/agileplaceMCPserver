@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP UI Test</title>
+</head>
+<body style="margin: 0; padding: 20px; font-family: monospace; background: #000; color: #0f0;">
+    <h1>🚀 MCP UI Resource Test</h1>
+    <div id="status">Checking if JavaScript runs...</div>
+    
+    <script>
+        // Absolute simplest test
+        document.getElementById('status').innerHTML = '✅ JavaScript is running!<br><br>Now testing data...';
+        
+        // Log to see if we can capture anything
+        console.log('Script loaded successfully');
+        
+        // Check if we're in an iframe
+        document.getElementById('status').innerHTML += '<br>In iframe: ' + (window.parent !== window);
+        
+        // Try to access the graph data from the tool call
+        document.getElementById('status').innerHTML += '<br><br>Waiting for graph data from MCP...';
+    </script>
+</body>
+</html>

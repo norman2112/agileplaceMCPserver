@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "basic-react": {
+      "command": "node",
+      "args": [
+        "/Users/potatoes/Desktop/agileplaceMCPdemo/ext-apps/examples/basic-server-react/dist/index.js",
+        "--stdio"
+      ]
+    }
+  }
+}
