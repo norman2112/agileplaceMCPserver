@@ -1,274 +1,242 @@
-# AgilePlace & OKR MCP Server
+# AgilePlace MCP Server
 
-An MCP (Model Context Protocol) server that provides tools for interacting with AgilePlace boards and Planview OKR (Objectives and Key Results) APIs.
+A [Model Context Protocol](https://modelcontextprotocol.io/) server for [Planview AgilePlace](https://www.planview.com/products/agileplace/) (LeanKit) and Planview OKRs. Provides 80+ tools for managing boards, cards, attachments, automations, scoring (WSJF), hierarchies, dependencies, planning increments, and OKR objectives directly from Claude Desktop or any MCP-compatible client.
 
-## Features
+## Quick Start
 
-### AgilePlace Integration
-- List card types
-- Batch create cards
-- Create connected cards (parent-child relationships)
-- Create Epic hierarchies (Epic → Features → Stories)
-- List cards on boards
-- Update cards
-- Connect existing cards
-
-### OKR Integration
-- List objectives with pagination
-- Get key results for specific objectives
-- Automatic OAuth2 token management with caching and refresh
-
-## Prerequisites
-
-- **Node.js** (version 18 or higher recommended)
-  - macOS/Linux: Install via [Homebrew](https://brew.sh/) or [nvm](https://github.com/nvm-sh/nvm)
-  - Windows: Download from [nodejs.org](https://nodejs.org/) or use [nvm-windows](https://github.com/coreybutler/nvm-windows)
-  - Verify installation: `node --version` and `npm --version`
-
-- **npm** (comes with Node.js, but verify: `npm --version`)
-
-## Setup
-
-1. Install dependencies:
 ```bash
 npm install
 ```
 
-**Note:** This command works on both macOS/Linux (Terminal) and Windows (CMD/PowerShell). The dependencies will be installed in the `node_modules/` directory.
+Add to your Claude Desktop config:
 
-2. Configure environment variables in Claude Desktop config (recommended) or in your shell environment.
-
-3. Run the server (reads from Claude Desktop config by default):
-```bash
-node server.mjs
-```
-
-## Claude Desktop Configuration
-
-To use this MCP server with Claude Desktop, add it to your Claude Desktop configuration file.
-
-### macOS Configuration
-
-Location: `~/Library/Application Support/Claude/claude_desktop_config.json`
+**macOS** — `~/Library/Application Support/Claude/claude_desktop_config.json`  
+**Windows** — `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
     "agileplace": {
       "command": "/opt/homebrew/bin/node",
-      "args": ["/path/to/your/demo/server.mjs"],
+      "args": ["/path/to/server.mjs"],
       "env": {
         "AGILEPLACE_URL": "https://your-instance.leankit.com/io",
-        "AGILEPLACE_TOKEN": "your-token-here",
-        "AGILEPLACE_BOARD_ID": "your-board-id",
+        "AGILEPLACE_TOKEN": "your-api-token",
+        "AGILEPLACE_BOARD_ID": "default-board-id",
         "OKR_BASE_URL": "https://api-us.okrs.planview.com",
         "OKR_CLIENT_ID": "your-oauth2-client-id",
-        "OKR_CLIENT_SECRET": "your-oauth2-client-secret",
-        "OKR_DEFAULT_LIMIT": "200",
-        "OKR_FETCH_TIMEOUT_MS": "25000"
+        "OKR_CLIENT_SECRET": "your-oauth2-client-secret"
       }
     }
   }
 }
 ```
 
-**Note:** If you installed Node.js via Homebrew, the path is typically `/opt/homebrew/bin/node` (Apple Silicon) or `/usr/local/bin/node` (Intel). Use `which node` to find your Node.js path.
+> **Node path:** Use `which node` to find yours. Homebrew on Apple Silicon installs to `/opt/homebrew/bin/node`. On Windows, use `node` (must be in PATH) or the full path to `node.exe`. Use `\\` or `/` for Windows paths in `args`.
 
-### Windows Configuration
+Restart Claude Desktop after saving.
 
-Location: `%APPDATA%\Claude\claude_desktop_config.json`  
-(Full path: `C:\Users\<YourUsername>\AppData\Roaming\Claude\claude_desktop_config.json`)
+## Tools
 
-```json
-{
-  "mcpServers": {
-    "agileplace": {
-      "command": "node",
-      "args": ["C:\\path\\to\\your\\demo\\server.mjs"],
-      "env": {
-        "AGILEPLACE_URL": "https://your-instance.leankit.com/io",
-        "AGILEPLACE_TOKEN": "your-token-here",
-        "AGILEPLACE_BOARD_ID": "your-board-id",
-        "OKR_BASE_URL": "https://api-us.okrs.planview.com",
-        "OKR_CLIENT_ID": "your-oauth2-client-id",
-        "OKR_CLIENT_SECRET": "your-oauth2-client-secret",
-        "OKR_DEFAULT_LIMIT": "200",
-        "OKR_FETCH_TIMEOUT_MS": "25000"
-      }
-    }
-  }
-}
-```
+### Boards
 
-**Note:** On Windows, use double backslashes (`\\`) in file paths, or forward slashes (`/`). Ensure Node.js is in your system PATH, or use the full path to `node.exe`.
+| Tool | Description |
+|------|-------------|
+| `createBoard` | Create a new board |
+| `listBoards` | List boards with optional search/filter |
+| `archiveBoard` | Archive a board |
+| `batchArchiveBoards` | Archive multiple boards |
+| `updateBoard` | Update board settings (title, defaults, WIP, sharing) |
+| `updateBoardLayout` | Update full lane layout |
+| `getBoardCustomFields` | Get custom field config |
+| `updateBoardCustomFields` | Update custom field config |
+| `exportBoardHistory` | Export board history as CSV (movements, events, who/when/what) |
 
-### Configuration Notes
+### Cards
 
-- Replace `/path/to/your/demo/server.mjs` with the actual path to your `server.mjs` file
-- The server reads from Claude Desktop config `mcpServers.<server>.env` by default
-- Explicit environment variables take precedence over values in the config JSON
-- You can override the config path with `CLAUDE_DESKTOP_CONFIG_PATH`
-- If you have multiple `mcpServers` entries, you can force which one is used with `CLAUDE_MCP_SERVER_KEY`
-- Restart Claude Desktop after modifying the configuration file
-
-## OKR Authentication
-
-The OKR integration uses OAuth2 client credentials flow. You need to generate OAuth2 credentials in Planview Admin before using the OKR tools.
-
-### Generating a Bearer Token
-
-To generate OAuth2 credentials for OKR API access:
-
-1. In **Planview Admin**, on the **Settings** screen, click the **OAuth2 credentials** tab.
-2. Click **Create OAuth2 credentials**.
-3. Enter a **Name** for the credential.
-4. Click the **Application** list and select **OKRs Integration**.
-5. Click **Create OAuth2 credentials**.
-6. Copy the **Client ID** and **Client Secret** and store them in a secure location. You can click the icons to the right of each field to copy them to your clipboard.
-
-   ⚠️ **WARNING**: For security reasons, you cannot view the client secret after you click Close. If your credentials are not secure, your account can be vulnerable to unexpected or malicious actors.
-
-7. Click **Close**.
-
-### How It Works
-
-Once you have the OAuth2 credentials:
-1. The server automatically exchanges Client ID and Secret for an access token
-2. Tokens are cached and automatically refreshed when expired
-3. Tokens are valid for 1 hour and refreshed 5 minutes before expiry
-4. Automatic retry on 401 errors with fresh token
-
-Add the credentials to your Claude Desktop configuration (see Configuration sections above).
-
-## Available Tools
-
-### AgilePlace Boards
-
-- **createBoard**: Create a new board (title, optional description/level/custom URL).
-- **listBoards**: List boards (optional search, board ID filters, limit).
-- **archiveBoard**: Archive a single board.
-- **batchArchiveBoards**: Archive multiple boards with per-board success/failure.
-- **updateBoard**: Update board-level settings (defaults, WIP/sharing, URL, level, etc.).
-- **updateBoardLayout**: Update full lane layout for a board.
-- **getBoardCustomFields**: Get custom fields configuration for a board.
-- **updateBoardCustomFields**: Update custom fields configuration for a board.
-
-### AgilePlace Cards
-
-- **batchCreateCards**: Create one or more cards on a board (supports card types, headers, dates, dry run).
-- **batchCreateConnectedCards**: Create a parent card plus multiple children and connect them.
-- **getCard**: Get a single card by ID with a simplified summary plus full JSON.
-- **listCards**: List cards on a board (optional `includeChildren`, `boardId`).
-- **updateCard**: Update title, description, dates, header, card type, or priority for a card.
-- **batchUpdateCards**: Different updates per card (parallel PATCH; max 50).
-- **bulkUpdateCards**: Apply the same JSON Patch updates to many cards (native bulk API).
-- **moveCardToLane**: Move a card to a different lane.
-- **deleteCard**: Delete a single card.
-- **batchDeleteCards**: Delete multiple cards in one call.
-- **assignUsersToCards**: Assign one or more users to one or more cards.
-- **listCardIds**: List simple card IDs and titles (plus tags) for a board.
+| Tool | Description |
+|------|-------------|
+| `batchCreateCards` | Create one or more cards (supports types, headers, dates, dry run) |
+| `batchCreateConnectedCards` | Create parent + children and connect them |
+| `getCard` | Get card by ID |
+| `listCards` | List cards on a board |
+| `listCardIds` | Lightweight card ID + title listing |
+| `updateCard` | Update a single card |
+| `batchUpdateCards` | Different updates per card (max 50, parallel) |
+| `bulkUpdateCards` | Same JSON Patch update applied to many cards |
+| `moveCardToLane` | Move card to a different lane |
+| `deleteCard` | Delete a card |
+| `batchDeleteCards` | Delete multiple cards |
+| `assignUsersToCards` | Assign users to cards |
 
 ### Card Types
 
-- **listCardTypes**: List card types for a board (IDs and names).
-- **createCardType**: Create a card or task type on a board.
-- **updateCardType**: Partially update a card type (name, color, flags).
-- **deleteCardType**: Delete a card type.
-- **batchCreateCardTypes**: Create multiple card types in one call.
-- **batchDeleteCardTypes**: Delete multiple card types (skips default card/task types).
+| Tool | Description |
+|------|-------------|
+| `listCardTypes` | List card types for a board |
+| `createCardType` | Create a card/task type |
+| `updateCardType` | Update card type (name, color, flags) |
+| `deleteCardType` | Delete a card type |
+| `batchCreateCardTypes` | Create multiple card types |
+| `batchDeleteCardTypes` | Delete multiple card types |
+| `setupCardTypes` | Full card type setup in one call |
 
 ### Tags
 
-- **addCardTags**: Add tags to a single card.
-- **removeCardTags**: Remove tags from a single card.
-- **setCardTags**: Replace all tags on a card.
-- **batchAddCardTags**: Add tags to multiple cards with per-card results.
+| Tool | Description |
+|------|-------------|
+| `addCardTags` | Add tags to a card |
+| `removeCardTags` | Remove tags from a card |
+| `setCardTags` | Replace all tags on a card |
+| `batchAddCardTags` | Add tags to multiple cards |
 
 ### Comments
 
-- **createCardComment**: Create a comment on a card.
-- **listCardComments**: List comments for a card.
-- **updateCardComment**: Update an existing comment.
-- **deleteCardComment**: Delete a comment from a card.
-- **batchCreateComments**: Create comments on multiple cards in parallel and return per-comment success/failure.
+| Tool | Description |
+|------|-------------|
+| `createCardComment` | Create a comment |
+| `batchCreateComments` | Create comments on multiple cards in parallel |
+| `listCardComments` | List comments for a card |
+| `updateCardComment` | Update a comment |
+| `deleteCardComment` | Delete a comment |
+
+### Attachments
+
+| Tool | Description |
+|------|-------------|
+| `listAttachments` | List attachments on a card (id, name, description, createdOn, createdBy) |
+| `createAttachment` | Upload an attachment (multipart; fileContent + fileName, optional description) |
+| `deleteAttachment` | Delete an attachment from a card |
+
+### Automations
+
+| Tool | Description |
+|------|-------------|
+| `listAutomations` | List automations for a board (id, description, enabled, events, filter, action) |
+| `getAutomation` | Get full automation details (schedule, filter, action config) |
+| `triggerBoardCustomEvent` | Trigger board automations for a custom event name (rate limited) |
+| `triggerCardCustomEvent` | Trigger card-level automations for a custom event name |
+| `getAutomationAudit` | Get last 20 audit records for an automation |
 
 ### Lanes & Layout
 
-- **listLanes**: List lanes for a board (id, title, WIP, status, parent, etc.).
-- **updateLane**: Update lane properties (title, description, WIP, status).
-- **moveLaneWithinParent**: Reorder a lane within its parent.
-- **moveLaneToNewParent**: Move a lane under a new parent.
-- **setLaneClassType**: Normalize lane classType/cardStatus based on usage.
-- **rebuildBoardLayoutFromLanes**: Normalize and rebuild board lane layout.
+| Tool | Description |
+|------|-------------|
+| `listLanes` | List lanes (ID, title, WIP, status, parent) |
+| `addLane` | Add a new lane |
+| `updateLane` | Update lane properties |
+| `removeLane` | Remove a lane |
+| `resizeLane` | Change lane column width |
+| `moveLane` | Move a lane to a new position/parent |
+| `cloneBoardLayout` | Replace board layout from a snapshot |
 
 ### Relationships & Dependencies
 
-- **connectExistingCards**: Connect existing cards as parent/child.
-- **get_card_relationships**: Full relationships for a card (dependencies, parents, children).
-- **getCardChildren**: Lightweight child lookup for a card.
-- **deleteCardConnections**: Delete parent/child connections for cards.
-- **create_card_dependency**: Create a dependency between cards.
-- **updateCardDependency**: Update an existing dependency (native API payload).
-- **deleteCardDependency**: Delete a dependency (native API payload).
+| Tool | Description |
+|------|-------------|
+| `connectExistingCards` | Create parent-child connections |
+| `get_card_relationships` | Full relationship map for a card |
+| `getCardChildren` | Get child cards |
+| `deleteCardConnections` | Delete parent/child connections |
+| `create_card_dependency` | Create a dependency |
+| `updateCardDependency` | Update a dependency |
+| `deleteCardDependency` | Delete a dependency |
 
 ### Hierarchy
 
-- **createEpicHierarchy**: Create an Epic → Features → Stories hierarchy, with optional dry run.
+| Tool | Description |
+|------|-------------|
+| `createEpicHierarchy` | Create Epic → Features → Stories in one call (supports dry run) |
 
 ### Planning (PI / Increments)
 
-- **listPlanningSeries**: List planning series (PIs) in the workspace.
-- **createPlanningSeries**: Create a planning series (payload passed through).
-- **getPlanningSeries**: Get a planning series by ID.
-- **updatePlanningSeries**: Update a planning series (PATCH).
-- **deletePlanningSeries**: Delete a planning series.
-- **createPlanningIncrement**: Create an increment within a planning series.
-- **listPlanningIncrements**: List increments for a planning series.
-- **updatePlanningIncrement**: Update an increment in a planning series.
-- **deletePlanningIncrement**: Delete an increment from a planning series.
-- **getPlanningIncrementStatus**: Get status for a planning increment, optionally filtered by category.
+| Tool | Description |
+|------|-------------|
+| `listPlanningSeries` | List planning series |
+| `createPlanningSeries` | Create a planning series |
+| `getPlanningSeries` | Get a planning series by ID |
+| `updatePlanningSeries` | Update a planning series |
+| `deletePlanningSeries` | Delete a planning series |
+| `createPlanningIncrement` | Create an increment |
+| `listPlanningIncrements` | List increments |
+| `updatePlanningIncrement` | Update an increment |
+| `deletePlanningIncrement` | Delete an increment |
+| `getPlanningIncrementStatus` | Get increment status |
 
 ### Reporting & Analytics
 
-- **getBoardThroughputReport**: Throughput report for a board.
-- **getBoardWipReport**: WIP report for a board.
-- **getLaneBottleneckReport**: Lane bottleneck report for a board.
-- **getCardStatistics**: Statistics for a card (cycle/lead time, etc.).
-- **getCardActivity**: Activity history for a card.
+| Tool | Description |
+|------|-------------|
+| `getBoardThroughputReport` | Throughput report |
+| `getBoardWipReport` | WIP report |
+| `getLaneBottleneckReport` | Lane bottleneck report |
+| `getCardStatistics` | Card cycle/lead time stats |
+| `getCardActivity` | Card activity history |
+
+### Card Scoring (WSJF)
+
+| Tool | Description |
+|------|-------------|
+| `listScoringTemplates` | List scoring templates (WSJF, org, board-level; id, title, metrics) |
+| `getBoardScoring` | Get current scoring session (active template + card scores) |
+| `setScoringSession` | Set template and card list for scoring (cardIds are exclusive) |
+| `updateCardScore` | Update staged score for a card (scoreTotal, scores per metric) |
+| `applyScoringToCards` | Persist staged scores to cards on the board |
+| `deleteCardScores` | Remove applied scores from cards |
 
 ### Users
 
-- **getCurrentUser**: Get the current AgilePlace user.
-- **listUsers**: List users in the workspace.
-- **getUser**: Get a single user by ID.
+| Tool | Description |
+|------|-------------|
+| `getCurrentUser` | Get current user |
+| `listUsers` | List workspace users |
+| `getUser` | Get user by ID |
 
-### OKR Tools
+### OKRs
 
-- **okrListObjectives**: List objectives with pagination and optional scope filter.
-- **okrGetKeyResults**: List key results for a specific objective ID.
+| Tool | Description |
+|------|-------------|
+| `okrListObjectives` | List objectives with pagination |
+| `okrGetKeyResults` | Get key results for an objective |
 
-### Utility & Health
+### Utility
 
-- **checkHealth**: Check MCP server configuration and health (AgilePlace + OKR + limits).
+| Tool | Description |
+|------|-------------|
+| `checkHealth` | Server health and config check |
 
-## Configuration Options
+## OKR Authentication
+
+The OKR integration uses OAuth2 client credentials. Generate credentials in **Planview Admin → Settings → OAuth2 credentials**, select **OKRs Integration** as the application, and store the Client ID and Secret securely. The server handles token exchange, caching, and refresh automatically.
+
+## Configuration
 
 ### AgilePlace
-- `MAX_CARDS` - Maximum cards to process in batch operations (default: 15)
-- `MAX_DESC` - Maximum description length (default: 800)
-- `FETCH_TIMEOUT_MS` - HTTP request timeout (default: 25000)
-- `STORY_LIMIT` - Maximum stories per feature in Epic hierarchy (default: 5)
-- `PORT` - Health check server port (default: 3333)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MAX_CARDS` | 15 | Max cards per batch operation |
+| `MAX_DESC` | 800 | Max description length |
+| `FETCH_TIMEOUT_MS` | 25000 | HTTP request timeout (ms) |
+| `STORY_LIMIT` | 5 | Max stories per feature in hierarchy |
 
 ### OKR
-- `OKR_DEFAULT_LIMIT` - Default pagination limit (default: 200, max: 500)
-- `OKR_FETCH_TIMEOUT_MS` - OKR API timeout (default: 25000)
 
-## Health Check
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OKR_DEFAULT_LIMIT` | 200 | Default pagination limit (max 500) |
+| `OKR_FETCH_TIMEOUT_MS` | 25000 | OKR API timeout (ms) |
 
-The server includes a health check endpoint at `http://localhost:3333/health` (if enabled) and a `checkHealth` MCP tool to verify configuration and status.
+## Config Resolution
+
+The server reads environment variables from the Claude Desktop config file (`mcpServers.<key>.env`) by default. Explicit environment variables take precedence. Override the config path with `CLAUDE_DESKTOP_CONFIG_PATH` or force a specific server key with `CLAUDE_MCP_SERVER_KEY`.
+
+## Requirements
+
+- Node.js 18+
+- An AgilePlace instance with API token
+- (Optional) Planview OKR OAuth2 credentials
 
 ## License
 
-See LICENSE file for details.
-
+See LICENSE for details.

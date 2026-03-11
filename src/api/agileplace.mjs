@@ -1203,3 +1203,242 @@ export async function getCardById(cardId) {
   return data.cards?.[0] || null;
 }
 
+// ----------------
+// Attachments
+// ----------------
+
+export async function listAttachmentsApi(cardId) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/card/${cardId}/attachment`, {
+    method: "GET",
+    headers: HEADERS,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(formatFetchError(resp, "List attachments", text));
+  }
+  const data = await resp.json();
+  return data.attachments || [];
+}
+
+export async function createAttachmentApi(cardId, fileName, fileContent, description) {
+  const ioPath = getIoPath();
+  const boundary = "----MCPBoundary" + Date.now();
+  const body = [
+    `--${boundary}`,
+    'Content-Disposition: form-data; name="description"',
+    "",
+    description ?? "",
+    `--${boundary}`,
+    `Content-Disposition: form-data; name="file"; filename="${fileName}"`,
+    "Content-Type: application/octet-stream",
+    "",
+    typeof fileContent === "string" ? fileContent : String(fileContent),
+    `--${boundary}--`,
+  ].join("\r\n");
+
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/card/${cardId}/attachment`, {
+    method: "POST",
+    headers: {
+      ...HEADERS,
+      "Content-Type": `multipart/form-data; boundary=${boundary}`,
+    },
+    body,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(formatFetchError(resp, "Create attachment", text));
+  }
+  return resp.json();
+}
+
+export async function deleteAttachmentApi(cardId, attachmentId) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(
+    `${API_BASE}${ioPath}/card/${cardId}/attachment/${attachmentId}`,
+    { method: "DELETE", headers: HEADERS }
+  );
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(formatFetchError(resp, "Delete attachment", text));
+  }
+}
+
+// ----------------
+// Automations
+// ----------------
+
+export async function listAutomationsApi(boardId) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/board/${boardId}/automation`, {
+    method: "GET",
+    headers: HEADERS,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(formatFetchError(resp, "List automations", text));
+  }
+  const data = await resp.json();
+  return data.cardAutomations || [];
+}
+
+export async function getAutomationApi(boardId, automationId) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(
+    `${API_BASE}${ioPath}/board/${boardId}/automation/${automationId}`,
+    { method: "GET", headers: HEADERS }
+  );
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(formatFetchError(resp, "Get automation", text));
+  }
+  return resp.json();
+}
+
+export async function triggerBoardCustomEventApi(boardId, eventName) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/board/${boardId}/automation/customevent`, {
+    method: "POST",
+    headers: HEADERS,
+    body: JSON.stringify({ eventName }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(formatFetchError(resp, "Trigger board custom event", text));
+  }
+  return resp.json().catch(() => ({}));
+}
+
+export async function triggerCardCustomEventApi(cardId, eventName) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/card/${cardId}/automation/customevent`, {
+    method: "POST",
+    headers: HEADERS,
+    body: JSON.stringify({ eventName }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(formatFetchError(resp, "Trigger card custom event", text));
+  }
+  return resp.json().catch(() => ({}));
+}
+
+export async function getAutomationAuditApi(boardId, automationId) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(
+    `${API_BASE}${ioPath}/board/${boardId}/automation/${automationId}/audit`,
+    { method: "GET", headers: HEADERS }
+  );
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(formatFetchError(resp, "Get automation audit", text));
+  }
+  return resp.json();
+}
+
+// ----------------
+// Board history export (CSV)
+// ----------------
+
+export async function exportBoardHistoryApi(boardId) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/board/${boardId}/export`, {
+    method: "GET",
+    headers: HEADERS,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(formatFetchError(resp, "Export board history", text));
+  }
+  return resp.text();
+}
+
+// ----------------
+// Card scoring (WSJF)
+// ----------------
+
+export async function listScoringTemplatesApi(boardId) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/board/${boardId}/scoring/template`, {
+    method: "GET",
+    headers: HEADERS,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(formatFetchError(resp, "List scoring templates", text));
+  }
+  const data = await resp.json();
+  return Array.isArray(data) ? data : data.templates || [];
+}
+
+export async function getBoardScoringApi(boardId) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/board/${boardId}/scoring`, {
+    method: "GET",
+    headers: HEADERS,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(formatFetchError(resp, "Get board scoring", text));
+  }
+  return resp.json();
+}
+
+export async function setScoringSessionApi(boardId, templateId, templateVersion, cardIds) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/board/${boardId}/scoring`, {
+    method: "PATCH",
+    headers: HEADERS,
+    body: JSON.stringify({
+      template: { id: templateId, version: templateVersion },
+      cardIds: Array.isArray(cardIds) ? cardIds : [cardIds],
+    }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(formatFetchError(resp, "Set scoring session", text));
+  }
+}
+
+export async function updateCardScoreApi(boardId, cardId, payload) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(
+    `${API_BASE}${ioPath}/board/${boardId}/scoring/card/${cardId}`,
+    {
+      method: "PUT",
+      headers: HEADERS,
+      body: JSON.stringify(payload),
+    }
+  );
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(formatFetchError(resp, "Update card score", text));
+  }
+}
+
+export async function applyScoringToCardsApi(boardId, cardIds) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/board/${boardId}/scoring/apply`, {
+    method: "POST",
+    headers: HEADERS,
+    body: JSON.stringify({ cardIds: Array.isArray(cardIds) ? cardIds : [cardIds] }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(formatFetchError(resp, "Apply scoring to cards", text));
+  }
+}
+
+export async function deleteCardScoresApi(boardId, cardIds) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/card/scoring`, {
+    method: "DELETE",
+    headers: HEADERS,
+    body: JSON.stringify({ boardId, cardIds: Array.isArray(cardIds) ? cardIds : [cardIds] }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(formatFetchError(resp, "Delete card scores", text));
+  }
+}
+

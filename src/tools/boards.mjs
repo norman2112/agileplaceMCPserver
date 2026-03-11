@@ -9,6 +9,7 @@ import {
   updateBoardLayoutApi,
   getBoardCustomFieldsApi,
   updateBoardCustomFieldsApi,
+  exportBoardHistoryApi,
 } from "../api/agileplace.mjs";
 
 const { DEFAULT_BOARD_ID } = CONFIG;
@@ -214,6 +215,32 @@ export function registerBoardTools(mcp) {
         `Updated custom fields for board ${resolvedBoardId}`,
         JSON.stringify(result || { boardId: resolvedBoardId }, null, 2)
       );
+    }
+  );
+
+  // Board history export (CSV)
+  mcp.registerTool(
+    "exportBoardHistory",
+    {
+      description:
+        "Export board history as CSV (card movements, events, who/when/what). Columns: When, What, Who, Card, Detail, Card Id, From Lane, From Lane Id, To Lane, To Lane Id, EventDescription. Returns summary (row count), first 50 rows preview, and full CSV.",
+      inputSchema: {
+        boardId: z.string(),
+      },
+    },
+    async ({ boardId }) => {
+      const csv = await exportBoardHistoryApi(boardId);
+      const lines = csv.trim().split(/\r?\n/).filter(Boolean);
+      const rowCount = Math.max(0, lines.length - 1); // subtract header
+      const summary = `Board ${boardId} history: ${rowCount} data row(s) (excluding header).`;
+      const previewLines = lines.slice(0, 51); // header + first 50 data rows
+      const preview = previewLines.join("\n");
+      const parts = [summary];
+      if (rowCount > 50) {
+        parts.push(`Preview (first 50 data rows):\n${preview}`);
+      }
+      parts.push(`Full CSV:\n${csv}`);
+      return respondText(...parts);
     }
   );
 }
