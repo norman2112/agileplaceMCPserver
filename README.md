@@ -1,6 +1,6 @@
 # AgilePlace MCP Server
 
-A [Model Context Protocol](https://modelcontextprotocol.io/) server for [Planview AgilePlace](https://www.planview.com/products/agileplace/) (LeanKit) and Planview OKRs. Provides 80+ tools for managing boards, cards, attachments, automations, scoring (WSJF), hierarchies, dependencies, planning increments, and OKR objectives directly from Claude Desktop or any MCP-compatible client.
+A [Model Context Protocol](https://modelcontextprotocol.io/) server for [Planview AgilePlace](https://www.planview.com/products/agileplace/) and Planview OKRs. Provides 80+ tools for managing boards, cards, attachments, automations, scoring (WSJF), hierarchies, dependencies, planning increments, and OKR objectives directly from Claude Desktop or any MCP-compatible client.
 
 ## Quick Start
 
@@ -59,8 +59,10 @@ Restart Claude Desktop after saving.
 | `batchCreateCards` | Create one or more cards (supports types, headers, dates, dry run) |
 | `batchCreateConnectedCards` | Create parent + children and connect them |
 | `getCard` | Get card by ID |
+| `getCardCustomFields` | Get card custom field values + board metadata |
 | `listCards` | List cards on a board |
 | `listCardIds` | Lightweight card ID + title listing |
+| `setCardCustomFields` | Set custom field values on a card |
 | `updateCard` | Update a single card |
 | `batchUpdateCards` | Different updates per card (max 50, parallel) |
 | `bulkUpdateCards` | Same JSON Patch update applied to many cards |

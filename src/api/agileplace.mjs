@@ -211,13 +211,14 @@ export function buildUpdateOperations({
   return operations;
 }
 
-export async function updateCard({ cardId, ...updates }) {
-  const operations = buildUpdateOperations(updates);
-  if (operations.length === 0) {
-    throw new Error("At least one field to update is required.");
+// Utility: patch a card using an RFC 6902 JSON Patch operations array.
+// Kept separate so card-specific tools (like custom field setters) can reuse it.
+export async function patchCardOperations({ cardId, operations, context = "Patch card" }) {
+  if (!Array.isArray(operations) || operations.length === 0) {
+    throw new Error("At least one JSON Patch operation is required.");
   }
-  const ioPath = getIoPath();
 
+  const ioPath = getIoPath();
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/card/${cardId}`, {
     method: "PATCH",
     headers: HEADERS,
@@ -226,10 +227,18 @@ export async function updateCard({ cardId, ...updates }) {
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Update card", text));
+    throw new Error(formatFetchError(resp, context, text));
   }
 
   return resp.json();
+}
+
+export async function updateCard({ cardId, ...updates }) {
+  const operations = buildUpdateOperations(updates);
+  if (operations.length === 0) {
+    throw new Error("At least one field to update is required.");
+  }
+  return patchCardOperations({ cardId, operations, context: "Update card" });
 }
 
 // Utility: add tags to a card (PATCH with add operations)
@@ -1188,7 +1197,8 @@ export async function getCardActivityApi(cardId) {
 // Utility: fetch a single card by ID (for title lookup)
 export async function getCardById(cardId) {
   const ioPath = getIoPath();
-  const queryParams = `?cards=${cardId}`;
+  // Request customFields so tools can read/write card-level custom field values.
+  const queryParams = `?cards=${cardId}&include=customFields&includeDetails=Y`;
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/card${queryParams}`, {
     method: "GET",
     headers: HEADERS,

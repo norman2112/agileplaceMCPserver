@@ -7,6 +7,8 @@ import {
   listCards,
   listCardTypes,
   getCardById,
+  getBoardCustomFieldsApi,
+  patchCardOperations,
   deleteCardApi,
   batchDeleteCardsApi,
   moveCardToLaneApi,
@@ -111,6 +113,75 @@ function validateConnectedCards(parent, children) {
   return {
     valid: errors.length === 0,
     errors
+  };
+}
+
+function extractCustomFieldValue(card, fieldId) {
+  const cf = card?.customFields;
+  if (!cf) return null;
+
+  const fid = String(fieldId);
+
+  // Common expected shape: customFields is an object keyed by fieldId.
+  if (cf && typeof cf === "object" && !Array.isArray(cf)) {
+    const direct = cf[fid] !== undefined ? cf[fid] : cf[String(fieldId)];
+    if (direct !== undefined) {
+      // Some APIs wrap values like `{ value: "..." }`.
+      if (direct && typeof direct === "object" && "value" in direct) return direct.value ?? null;
+      return direct ?? null;
+    }
+
+    // Fallback: if an object is keyed by indices but each value contains `{ fieldId, value }`.
+    for (const value of Object.values(cf)) {
+      if (!value || typeof value !== "object") continue;
+      const vFieldId = value.fieldId ?? value.id;
+      if (vFieldId !== undefined && String(vFieldId) === fid) {
+        if ("value" in value) return value.value ?? null;
+        return value.value ?? null;
+      }
+    }
+
+    return null;
+  }
+
+  // Alternate shape: customFields is an array of `{ fieldId, value }` entries.
+  if (Array.isArray(cf)) {
+    const found = cf.find(entry => {
+      if (!entry || typeof entry !== "object") return false;
+      const entryFieldId = entry.fieldId ?? entry.id;
+      return entryFieldId !== undefined && String(entryFieldId) === fid;
+    });
+    if (!found) return null;
+    const v = found.value !== undefined ? found.value : found.fieldValue;
+    return v === undefined ? null : v;
+  }
+
+  return null;
+}
+
+function buildCardCustomFieldsResponse({ boardId, cardId, card, boardFields }) {
+  const fields = (boardFields || []).map(f => {
+    const fid = String(f.id);
+    const type = f.type ?? "";
+    const value = extractCustomFieldValue(card, fid);
+    const helpText = f.helpText ?? "";
+    const choices =
+      (type === "choice" || type === "multi") ? f.choiceConfiguration?.choices ?? null : null;
+
+    return {
+      fieldId: fid,
+      label: f.label ?? "",
+      type,
+      value: value === undefined ? null : value,
+      helpText,
+      choices,
+    };
+  });
+
+  return {
+    boardId: String(boardId ?? ""),
+    cardId: String(cardId ?? ""),
+    fields,
   };
 }
 
@@ -476,6 +547,125 @@ export function registerCardTools(mcp) {
         JSON.stringify(summary, null, 2),
         `JSON:\n${JSON.stringify(card, null, 2)}`
       );
+    })
+  );
+
+  // ---- getCardCustomFields ----
+  mcp.registerTool(
+    "getCardCustomFields",
+    {
+      description:
+        "Get the card's custom field values (customFields) plus board custom field metadata (label/type/helpText) for context.",
+      inputSchema: {
+        cardId: z.string(),
+      },
+    },
+    wrapToolHandler("getCardCustomFields", async ({ cardId }) => {
+      const card = await getCardById(cardId);
+      if (!card) {
+        return respondText(`No card found with ID ${cardId}`);
+      }
+
+      const boardId = card?.board?.id ? String(card.board.id) : null;
+      if (!boardId) throw new Error(`Unable to determine boardId for card ${cardId}`);
+
+      const boardFieldsResp = await getBoardCustomFieldsApi(boardId);
+      const boardFields = boardFieldsResp?.customFields || [];
+
+      const response = buildCardCustomFieldsResponse({
+        boardId,
+        cardId,
+        card,
+        boardFields,
+      });
+
+      return respondText(`Card ${cardId} custom fields`, JSON.stringify(response, null, 2));
+    })
+  );
+
+  // ---- setCardCustomFields ----
+  mcp.registerTool(
+    "setCardCustomFields",
+    {
+      description:
+        "Set one or more custom field values on a card using JSON Patch on PATCH /io/card/:cardId. Null clears the custom field.",
+      inputSchema: {
+        cardId: z.string(),
+        fields: z.array(
+          z.object({
+            fieldId: z.string().min(1),
+            value: z.union([z.string(), z.number(), z.null(), z.array(z.string())]),
+          })
+        ).min(1),
+      },
+    },
+    wrapToolHandler("setCardCustomFields", async ({ cardId, fields }) => {
+      const card = await getCardById(cardId);
+      if (!card) throw new Error(`No card found with ID ${cardId}`);
+      const boardId = card?.board?.id ? String(card.board.id) : null;
+      if (!boardId) throw new Error(`Unable to determine boardId for card ${cardId}`);
+
+      const boardFieldsResp = await getBoardCustomFieldsApi(boardId);
+      const boardFields = boardFieldsResp?.customFields || [];
+      const metaByFieldId = new Map(boardFields.map(f => [String(f.id), f]));
+
+      // Optional best-effort warning to catch obvious type mismatches.
+      const warnIfMismatch = (expectedType, rawValue, fieldId) => {
+        if (!expectedType || rawValue === null || rawValue === undefined) return;
+
+        const type = String(expectedType);
+        const value = rawValue;
+
+        const ok =
+          (type === "number" && typeof value === "number") ||
+          ((type === "text" || type === "choice" || type === "date") && typeof value === "string") ||
+          (type === "multi" && Array.isArray(value) && value.every(v => typeof v === "string"));
+
+        if (!ok) {
+          console.warn(
+            `setCardCustomFields: fieldId=${fieldId} expected type=${type} but got value type=${
+              Array.isArray(value) ? "array" : typeof value
+            }`
+          );
+        }
+      };
+
+      fields.forEach(f => {
+        const meta = metaByFieldId.get(String(f.fieldId));
+        warnIfMismatch(meta?.type, f.value, f.fieldId);
+      });
+
+      // RFC 6902 JSON Patch: add/replace via customFields array.
+      // The AgilePlace API accepts `value: { fieldId, value }` at path `/customFields/0`.
+      const operations = fields.map(f => ({
+        op: "add",
+        path: "/customFields/0",
+        value: {
+          fieldId: String(f.fieldId),
+          value: f.value,
+        },
+      }));
+
+      await patchCardOperations({
+        cardId,
+        operations,
+        context: "Set card custom fields",
+      });
+
+      const updated = await getCardById(cardId);
+      if (!updated) throw new Error(`Unable to re-fetch updated card ${cardId}`);
+
+      const updatedBoardFieldsResp = await getBoardCustomFieldsApi(boardId);
+      const updatedBoardFields = updatedBoardFieldsResp?.customFields || [];
+
+      const response = buildCardCustomFieldsResponse({
+        boardId,
+        cardId,
+        card: updated,
+        boardFields: updatedBoardFields,
+      });
+
+      return respondText(`Updated card ${cardId} custom fields`, JSON.stringify(response, null, 2));
     })
   );
 
