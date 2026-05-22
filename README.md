@@ -18,11 +18,10 @@ Add to your Claude Desktop config:
   "mcpServers": {
     "agileplace": {
       "command": "/opt/homebrew/bin/node",
-      "args": ["/path/to/server.mjs"],
+      "args": ["/path/to/agileplaceMCPdemo/src/server.mjs"],
       "env": {
-        "AGILEPLACE_URL": "https://your-instance.leankit.com/io",
-        "AGILEPLACE_TOKEN": "your-api-token",
-        "AGILEPLACE_BOARD_ID": "default-board-id",
+        "AGILEPLACE_DEFAULT_URL": "https://your-instance.leankit.com/io",
+        "AGILEPLACE_DEFAULT_TOKEN": "your-api-token",
         "OKR_BASE_URL": "https://api-us.okrs.planview.com",
         "OKR_CLIENT_ID": "your-oauth2-client-id",
         "OKR_CLIENT_SECRET": "your-oauth2-client-secret"
@@ -36,6 +35,8 @@ Add to your Claude Desktop config:
 
 Restart Claude Desktop after saving.
 
+`default` is the canonical account alias for `AGILEPLACE_DEFAULT_URL`/`AGILEPLACE_DEFAULT_TOKEN`. Alias `default` maps to the scdemo520 tenant. Use `default` in all tool calls.
+
 ## Tools
 
 ### Boards
@@ -45,18 +46,23 @@ Restart Claude Desktop after saving.
 | `createBoard` | Create a new board |
 | `listBoards` | List boards with optional search/filter |
 | `archiveBoard` | Archive a board |
+| `unarchiveBoard` | Restore an archived board |
 | `batchArchiveBoards` | Archive multiple boards |
 | `updateBoard` | Update board settings (title, defaults, WIP, sharing) |
 | `updateBoardLayout` | Update full lane layout |
 | `getBoardCustomFields` | Get custom field config |
-| `updateBoardCustomFields` | Update custom field config |
+| `updateBoardCustomFields` | Update custom field config using JSON Patch array |
+| `createBoardCustomField` | Create one board custom field (helper) |
+| `createBoardCustomFields` | Create multiple board custom fields (helper) |
+| `patchBoardCustomField` | Update one board custom field by field ID (helper) |
+| `deleteBoardCustomField` | Delete one board custom field by field ID (helper) |
 | `exportBoardHistory` | Export board history as CSV (movements, events, who/when/what) |
 
 ### Cards
 
 | Tool | Description |
 |------|-------------|
-| `batchCreateCards` | Create one or more cards (supports types, headers, dates, dry run) |
+| `batchCreateCards` | Create cards (per-card or batch `laneId`, cap from env; dry run) |
 | `batchCreateConnectedCards` | Create parent + children and connect them |
 | `getCard` | Get card by ID |
 | `getCardCustomFields` | Get card custom field values + board metadata |
@@ -64,33 +70,44 @@ Restart Claude Desktop after saving.
 | `listCardIds` | Lightweight card ID + title listing |
 | `setCardCustomFields` | Set custom field values on a card |
 | `updateCard` | Update a single card |
-| `batchUpdateCards` | Different updates per card (max 50, parallel) |
+| `batchUpdateCards` | Different updates per card (max 50; dry run; re-fetched summaries) |
 | `bulkUpdateCards` | Same JSON Patch update applied to many cards |
-| `moveCardToLane` | Move card to a different lane |
+| `moveCardToLane` | Move one card to a lane (preferred over bulk JSON Patch for lane-only moves) |
+| `bulkMoveCardsToLane` | Move many cards to the same lane (WIP override, lane by name, atomic mode) |
+| `moveCardToLaneByName` | Move card using lane title + boardId |
+| `searchCards` | Search titles/customId across boards |
+| `changeCardType` | Re-type a card |
+| `distributeCardsAcrossLanes` | Spread cards by % across lanes |
+| `assignLaneCardsToIncrement` | Assign all cards in a lane to an increment |
 | `deleteCard` | Delete a card |
 | `batchDeleteCards` | Delete multiple cards |
 | `assignUsersToCards` | Assign users to cards |
 
 ### Card Types
 
+Use **`updateCardType`** to rename or recolor an existing type in place (same type ID; cards on that type are unchanged). That matches how **`updateLane`** works for lanes. Avoid delete-and-recreate or a full **`setupCardTypes`** pass when you only need a color or label tweak.
+
 | Tool | Description |
 |------|-------------|
 | `listCardTypes` | List card types for a board |
 | `createCardType` | Create a card/task type |
-| `updateCardType` | Update card type (name, color, flags) |
+| `updateCardType` | Patch one card type (name, colorHex, isCardType, isTaskType) without new IDs or card reassignment |
+| `setDefaultCardType` | Set default card type by ID or name |
 | `deleteCardType` | Delete a card type |
 | `batchCreateCardTypes` | Create multiple card types |
-| `batchDeleteCardTypes` | Delete multiple card types |
-| `setupCardTypes` | Full card type setup in one call |
+| `batchDeleteCardTypes` | Delete multiple card types (supports forced default reassignment) |
+| `setupCardTypes` | Full card type setup in one call (default can be existing or newly created type) |
 
 ### Tags
 
 | Tool | Description |
 |------|-------------|
+| `listTagsOnBoard` | Distinct tags in use on a board |
 | `addCardTags` | Add tags to a card |
 | `removeCardTags` | Remove tags from a card |
 | `setCardTags` | Replace all tags on a card |
 | `batchAddCardTags` | Add tags to multiple cards |
+| `batchRemoveCardTags` | Remove tags from multiple cards |
 
 ### Comments
 
@@ -122,25 +139,28 @@ Restart Claude Desktop after saving.
 
 ### Lanes & Layout
 
+Use **`updateLane`** to rename or tweak one lane in place (PATCH lane properties; keeps lane ID and all cards). For card-level edits you use **`setCardCustomFields`** / **`bulkUpdateCards`**; **`updateLane`** is the same idea for lane metadata — avoid **`cloneBoardLayout`** for a simple rename (that replaces the entire layout and new lane IDs).
+
 | Tool | Description |
 |------|-------------|
 | `listLanes` | List lanes (ID, title, WIP, status, parent) |
+| `findLane` | Find lanes by title substring |
 | `addLane` | Add a new lane |
-| `updateLane` | Update lane properties |
+| `updateLane` | Rename or update one lane (title, description, wipLimit, default drop, card status) without replacing layout |
 | `removeLane` | Remove a lane |
 | `resizeLane` | Change lane column width |
 | `moveLane` | Move a lane to a new position/parent |
-| `cloneBoardLayout` | Replace board layout from a snapshot |
+| `cloneBoardLayout` | Replace board layout from a snapshot (optional `dryRun` to preview normalization) |
 
 ### Relationships & Dependencies
 
 | Tool | Description |
 |------|-------------|
-| `connectExistingCards` | Create parent-child connections |
-| `get_card_relationships` | Full relationship map for a card |
-| `getCardChildren` | Get child cards |
+| `connectExistingCards` | Parent-child connections (cross-board supported) |
+| `getCardRelationships` | Full relationship map for a card |
+| `getCardChildren` / `listCardChildren` | Child cards with board context |
 | `deleteCardConnections` | Delete parent/child connections |
-| `create_card_dependency` | Create a dependency |
+| `createCardDependency` | Create a dependency |
 | `updateCardDependency` | Update a dependency |
 | `deleteCardDependency` | Delete a dependency |
 
@@ -149,6 +169,7 @@ Restart Claude Desktop after saving.
 | Tool | Description |
 |------|-------------|
 | `createEpicHierarchy` | Create Epic → Features → Stories in one call (supports dry run) |
+| `linkHierarchy` | Connect existing initiative/epic/feature/story card IDs |
 
 ### Planning (PI / Increments)
 
@@ -158,6 +179,8 @@ Restart Claude Desktop after saving.
 | `createPlanningSeries` | Create a planning series |
 | `getPlanningSeries` | Get a planning series by ID |
 | `updatePlanningSeries` | Update a planning series |
+| `addBoardsToPlanningSeries` | Append boards to a series (merge boardIds) |
+| `bootstrapPlanningIncrement` | Create PI parent + N child iterations |
 | `deletePlanningSeries` | Delete a planning series |
 | `createPlanningIncrement` | Create an increment |
 | `listPlanningIncrements` | List increments |
@@ -200,12 +223,60 @@ Restart Claude Desktop after saving.
 |------|-------------|
 | `okrListObjectives` | List objectives with pagination |
 | `okrGetKeyResults` | Get key results for an objective |
+| `okrCreateObjective` | Create an objective (write) |
+| `okrUpdateObjective` | Update an objective (PATCH; typed fields) |
+| `okrDeleteObjective` | Delete an objective (`confirm: true` required) |
+| `okrCreateKeyResult` | Create a key result (write) |
+| `okrUpdateKeyResult` | Update a key result (PATCH) |
+| `okrDeleteKeyResult` | Delete a key result (`confirm: true` required) |
+| `linkObjectiveToCard` | Link objective URL to card external link |
 
 ### Utility
 
 | Tool | Description |
 |------|-------------|
 | `checkHealth` | Server health and config check |
+| `listAccounts` | List configured account aliases |
+| `listToolCatalog` | Tools grouped by category (batch vs bulk) |
+
+See [docs/NCCI_WORKFLOWS.md](docs/NCCI_WORKFLOWS.md) for demo/PI/hierarchy patterns from the NCCI retrospective.
+
+## Board Custom Fields Patch Format
+
+`updateBoardCustomFields` expects `updates` as a non-empty JSON Patch array (RFC 6902). Each `add`/`replace` `value` object may only use keys accepted by the API: `label`, `helpText`, `type`, `index`, `choiceConfiguration`. Other keys (for example `iconName`) are rejected before the request is sent.
+
+Example (add a text field):
+
+```json
+[
+  {
+    "op": "add",
+    "path": "/",
+    "value": {
+      "label": "Submitter",
+      "type": "text"
+    }
+  }
+]
+```
+
+Example (add a choice field):
+
+```json
+[
+  {
+    "op": "add",
+    "path": "/",
+    "value": {
+      "label": "Sentiment",
+      "type": "choice",
+      "choiceConfiguration": {
+        "choices": ["Positive", "Neutral", "Negative", "N/A"]
+      }
+    }
+  }
+]
+```
 
 ## OKR Authentication
 
@@ -217,7 +288,8 @@ The OKR integration uses OAuth2 client credentials. Generate credentials in **Pl
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MAX_CARDS` | 15 | Max cards per batch operation |
+| `AGILEPLACE_MAX_CARDS_PER_BATCH` | — | Preferred: max cards per `batchCreateCards` / related batch creates (default **15**, hard cap **200**) |
+| `MAX_CARDS` | 15 | Legacy alias for the same limit if `AGILEPLACE_MAX_CARDS_PER_BATCH` is unset |
 | `MAX_DESC` | 800 | Max description length |
 | `FETCH_TIMEOUT_MS` | 25000 | HTTP request timeout (ms) |
 | `STORY_LIMIT` | 5 | Max stories per feature in hierarchy |

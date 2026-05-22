@@ -1,7 +1,14 @@
 import { z } from "zod";
-import { CONFIG, configSourceLabel } from "../config.mjs";
+import { CONFIG } from "../config.mjs";
 import { respondText, wrapToolHandler } from "../helpers.mjs";
-import { createCard, connectCards, listCardTypes, prepareCardPayload, sanitizeCardInput, validateCardTypeId } from "../api/agileplace.mjs";
+import {
+  createCard,
+  connectCards,
+  connectExistingCards,
+  prepareCardPayload,
+  sanitizeCardInput,
+  validateCardTypeId,
+} from "../api/agileplace.mjs";
 
 const { DEFAULT_BOARD_ID, MAX_CARDS, STORY_LIMIT } = CONFIG;
 
@@ -49,7 +56,7 @@ export function registerHierarchyTools(mcp) {
     wrapToolHandler("createEpicHierarchy", async ({ boardId, epic, features, dryRun }) => {
       const resolvedBoardId = boardId || DEFAULT_BOARD_ID;
       if (!resolvedBoardId) {
-        throw new Error(`Board ID is required. Provide "boardId" or set AGILEPLACE_BOARD_ID in ${configSourceLabel()}.`);
+        throw new Error('Board ID is required. Provide "boardId".');
       }
 
       const limitedFeatures = Array.isArray(features) ? features.slice(0, MAX_CARDS) : [];
@@ -206,6 +213,70 @@ export function registerHierarchyTools(mcp) {
       } catch (error) {
         throw new Error(`Failed to create Epic hierarchy: ${error?.message || error}`, { cause: error });
       }
+    })
+  );
+
+  mcp.registerTool(
+    "linkHierarchy",
+    {
+      description:
+        "Connect an existing hierarchy in one call: optional initiative → epics → features → stories (each level uses connectExistingCards; cross-board supported).",
+      inputSchema: {
+        initiativeCardId: z.string().optional(),
+        epics: z.array(
+          z.object({
+            cardId: z.string(),
+            features: z
+              .array(
+                z.object({
+                  cardId: z.string(),
+                  stories: z.array(z.object({ cardId: z.string() })).optional(),
+                })
+              )
+              .optional(),
+          })
+        ),
+        dryRun: z.boolean().optional(),
+      },
+    },
+    wrapToolHandler("linkHierarchy", async ({ initiativeCardId, epics, dryRun }) => {
+      const plan = [];
+      if (initiativeCardId && epics?.length) {
+        plan.push({ parentCardId: initiativeCardId, childCardIds: epics.map(e => e.cardId) });
+      }
+      for (const epic of epics || []) {
+        const features = epic.features || [];
+        if (features.length) {
+          plan.push({ parentCardId: epic.cardId, childCardIds: features.map(f => f.cardId) });
+        }
+        for (const feature of features) {
+          const stories = feature.stories || [];
+          if (stories.length) {
+            plan.push({
+              parentCardId: feature.cardId,
+              childCardIds: stories.map(s => s.cardId),
+            });
+          }
+        }
+      }
+      if (plan.length === 0) {
+        throw new Error("Provide initiativeCardId + epics, or epics with nested features/stories.");
+      }
+      if (dryRun) {
+        return respondText(
+          `Dry run: would run ${plan.length} connection group(s)`,
+          JSON.stringify({ dryRun: true, plan }, null, 2)
+        );
+      }
+      const results = [];
+      for (const g of plan) {
+        await connectExistingCards(g.parentCardId, g.childCardIds);
+        results.push({ ...g, success: true });
+      }
+      return respondText(
+        `Linked hierarchy (${results.length} connection group(s))`,
+        JSON.stringify({ results }, null, 2)
+      );
     })
   );
 }

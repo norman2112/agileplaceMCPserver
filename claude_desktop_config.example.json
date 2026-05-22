@@ -1,11 +1,16 @@
 {
   "mcpServers": {
-    "basic-react": {
+    "agileplace": {
       "command": "node",
       "args": [
-        "/Users/potatoes/Desktop/agileplaceMCPdemo/ext-apps/examples/basic-server-react/dist/index.js",
-        "--stdio"
-      ]
+        "/path/to/agileplaceMCPdemo/src/server.mjs"
+      ],
+      "env": {
+        "AGILEPLACE_DEFAULT_URL": "https://your-instance.leankit.com/io",
+        "AGILEPLACE_DEFAULT_TOKEN": "your-api-token",
+        "AGILEPLACE_ACME_URL": "https://acme.leankit.com/io",
+        "AGILEPLACE_ACME_TOKEN": "acme-api-token"
+      }
     }
   }
 }

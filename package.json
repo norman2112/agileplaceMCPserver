@@ -1,13 +1,14 @@
 {
   "name": "agileplace-mcp",
-  "version": "1.0.0",
+  "version": "1.5.1",
   "type": "module",
   "description": "AgilePlace MCP server for AgilePlace boards and Planview OKRs",
-  "main": "server.mjs",
+  "main": "src/server.mjs",
   "scripts": {
-    "start": "node server.mjs",
-    "lint": "node -e \"console.log('No lint configuration yet – add ESLint if desired.');\"",
-    "test": "node -e \"console.log('No automated tests yet – add tests when ready.');\""
+    "start": "node src/server.mjs",
+    "lint": "eslint src/ scripts/",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [
     "mcp",
@@ -24,5 +25,11 @@
     "express": "^4.19.2",
     "node-fetch": "^3.3.2",
     "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.4.0",
+    "globals": "^17.6.0",
+    "vitest": "^2.1.9"
   }
 }

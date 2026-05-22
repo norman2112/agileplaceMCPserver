@@ -1,86 +1,74 @@
 import { z } from "zod";
-import { CONFIG } from "../config.mjs";
-import { respondText, wrapToolHandler, fetchWithTimeout } from "../helpers.mjs";
-import { getIoPath, formatFetchError, updateCardDependencyApi, deleteCardDependencyApi } from "../api/agileplace.mjs";
+import { respondText, wrapToolHandler } from "../helpers.mjs";
+import {
+  createCardDependencyApi,
+  updateCardDependencyApi,
+  deleteCardDependencyApi,
+  DEPENDENCY_TIMING_VALUES,
+} from "../api/agileplace.mjs";
 
-const { API_BASE, HEADERS } = CONFIG;
+const dependencyTimingSchema = z.enum(DEPENDENCY_TIMING_VALUES);
+
+const dependencyUpdateSchema = z.object({
+  cardId: z.string().describe("Card that has the dependency"),
+  dependsOnCardId: z.string().describe("Card that must complete/start before cardId can proceed"),
+  timing: dependencyTimingSchema.optional().describe("Dependency timing (default finishToStart)"),
+});
 
 export function registerDependencyTools(mcp) {
-  // Create card dependency
   mcp.registerTool(
-    "create_card_dependency",
+    "createCardDependency",
     {
       description: "Create a dependency relationship between cards. Use when one card blocks or depends on another.",
       inputSchema: {
         cardId: z.string(),
         dependsOnCardId: z.string(),
-        timing: z.enum(["finishToStart", "startToStart", "startToFinish", "finishToFinish"]).optional(),
+        timing: dependencyTimingSchema.optional(),
       },
     },
-    wrapToolHandler("create_card_dependency", async ({ cardId, dependsOnCardId, timing = "finishToStart" }) => {
-      try {
-        const ioPath = getIoPath();
-        const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/card/dependency`, {
-          method: "POST",
-          headers: HEADERS,
-          body: JSON.stringify({
-            cardIds: [String(cardId)],
-            dependsOnCardIds: [String(dependsOnCardId)],
-            timing,
-          }),
-        });
-
-        if (!resp.ok) {
-          const text = await resp.text();
-          throw new Error(formatFetchError(resp, "Create card dependency", text));
-        }
-
-        return respondText(
-          `Dependency created: Card ${cardId} now depends on Card ${dependsOnCardId} (${timing})`
-        );
-      } catch (error) {
-        return {
-          content: [{
-            type: "text",
-            text: `Error creating dependency: ${error.message}`,
-          }],
-          isError: true,
-        };
-      }
+    wrapToolHandler("createCardDependency", async ({ cardId, dependsOnCardId, timing = "finishToStart" }) => {
+      await createCardDependencyApi(cardId, dependsOnCardId, timing);
+      return respondText(
+        `Dependency created: Card ${cardId} now depends on Card ${dependsOnCardId} (${timing})`
+      );
     })
   );
 
-  // Update card dependency
   mcp.registerTool(
     "updateCardDependency",
     {
-      description: "Update an existing dependency relationship between cards. Pass the payload expected by PATCH /io/card/dependency.",
+      description:
+        "Update timing on one or more card dependencies (PATCH /io/card/dependency). Each update needs cardId, dependsOnCardId, and timing.",
       inputSchema: {
-        payload: z.any(),
+        updates: z.array(dependencyUpdateSchema).min(1),
       },
     },
-    wrapToolHandler("updateCardDependency", async ({ payload }) => {
-      const result = await updateCardDependencyApi(payload);
+    wrapToolHandler("updateCardDependency", async ({ updates }) => {
+      const result = await updateCardDependencyApi(updates);
       return respondText(
-        "Updated card dependency",
+        `Updated ${updates.length} dependency relationship(s)`,
         JSON.stringify(result, null, 2)
       );
     })
   );
 
-  // Delete card dependency
   mcp.registerTool(
     "deleteCardDependency",
     {
-      description: "Delete a dependency relationship between cards. Pass the payload expected by DELETE /io/card/dependency.",
+      description:
+        "Remove dependency links between cards (DELETE /io/card/dependency). Unlinks each cardId from each dependsOnCardId in the cross product.",
       inputSchema: {
-        payload: z.any(),
+        cardIds: z.array(z.string()).min(1).describe("Cards to unlink from dependencies"),
+        dependsOnCardIds: z
+          .array(z.string())
+          .min(1)
+          .describe("Dependency target cards to unlink from cardIds"),
       },
     },
-    wrapToolHandler("deleteCardDependency", async ({ payload }) => {
-      const result = await deleteCardDependencyApi(payload);
+    wrapToolHandler("deleteCardDependency", async ({ cardIds, dependsOnCardIds }) => {
+      const result = await deleteCardDependencyApi({ cardIds, dependsOnCardIds });
       return respondText(
-        "Deleted card dependency",
+        `Deleted dependencies for ${cardIds.length} card(s)`,
         JSON.stringify(result, null, 2)
       );
     })

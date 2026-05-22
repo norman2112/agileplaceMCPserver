@@ -1,15 +1,49 @@
-import { CONFIG, configSourceLabel } from "../config.mjs";
+import { CONFIG } from "../config.mjs";
 import { fetchWithTimeout, stripHtml } from "../helpers.mjs";
+import { getActiveAccountConfig } from "../account-context.mjs";
 
-const {
-  API_BASE,
-  HEADERS,
-  DEFAULT_BOARD_ID,
-  MAX_CARDS,
-  MAX_DESC,
-  STORY_LIMIT,
-  FETCH_TIMEOUT_MS,
-} = CONFIG;
+const { DEFAULT_BOARD_ID, MAX_DESC } = CONFIG;
+
+function currentApiBase() {
+  return getActiveAccountConfig().url;
+}
+
+function currentHeaders() {
+  const token = getActiveAccountConfig().token;
+  return {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+}
+
+const API_BASE = {
+  toString() {
+    return currentApiBase();
+  },
+  endsWith(suffix) {
+    return currentApiBase().endsWith(suffix);
+  },
+};
+
+const HEADERS = new Proxy(
+  {},
+  {
+    get(_target, prop) {
+      return currentHeaders()[prop];
+    },
+    ownKeys() {
+      return Reflect.ownKeys(currentHeaders());
+    },
+    getOwnPropertyDescriptor(_target, prop) {
+      return {
+        enumerable: true,
+        configurable: true,
+        value: currentHeaders()[prop],
+      };
+    },
+  }
+);
 
 export function getIoPath() {
   // Check if API_BASE ends with /io (more precise than includes)
@@ -25,6 +59,13 @@ export function normalizeBoardId(value) {
 export function formatFetchError(resp, context, rawText) {
   const msg = (rawText || "").replace(/<[^>]+>/g, "").slice(0, 500);
   return `${context} failed: ${resp.status} ${resp.statusText} = ${msg}`;
+}
+
+/** Error with HTTP status from a failed fetch response (use instead of `new Error(formatFetchError(...))`). */
+export function fetchResponseError(resp, context, rawText) {
+  const err = new Error(formatFetchError(resp, context, rawText));
+  err.statusCode = resp.status;
+  return err;
 }
 
 // 🔧 Normalize date to YYYY-MM-DD format for API
@@ -164,11 +205,22 @@ export async function createCard(cardInput = {}, options = {}) {
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Create card", text));
+    throw fetchResponseError(resp, "Create card", text);
   }
 
   return resp.json();
 }
+
+/** AgilePlace card priority values (see markdown/apiDocs.md — Update Card automation). */
+export const CARD_PRIORITY_VALUES = ["normal", "low", "high", "critical"];
+const CARD_PRIORITY_SET = new Set(CARD_PRIORITY_VALUES);
+
+export const DEPENDENCY_TIMING_VALUES = [
+  "finishToStart",
+  "startToStart",
+  "startToFinish",
+  "finishToFinish",
+];
 
 // Build JSON Patch operations for card update (shared by updateCard and batchUpdateCards)
 export function buildUpdateOperations({
@@ -205,6 +257,11 @@ export function buildUpdateOperations({
     operations.push({ op: "replace", path: "/typeId", value: validateCardTypeId(cardTypeId) });
   }
   if (priority !== undefined) {
+    if (!CARD_PRIORITY_SET.has(priority)) {
+      throw new Error(
+        `Invalid priority "${priority}". Must be one of: ${CARD_PRIORITY_VALUES.join(", ")}`
+      );
+    }
     operations.push({ op: "replace", path: "/priority", value: priority });
   }
 
@@ -227,7 +284,7 @@ export async function patchCardOperations({ cardId, operations, context = "Patch
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, context, text));
+    throw fetchResponseError(resp, context, text);
   }
 
   return resp.json();
@@ -246,8 +303,9 @@ export async function addCardTags(cardId, tags) {
   if (!Array.isArray(tags) || tags.length === 0) {
     throw new Error("tags must be a non-empty array of strings.");
   }
-  const operations = tags.map(tag => ({ op: "add", path: "/tags/-", value: String(tag).trim() })).filter(op => op.value);
-  if (operations.length === 0) throw new Error("No valid tags to add.");
+  const uniqueTags = [...new Set(tags.map(tag => String(tag).trim()).filter(Boolean))];
+  if (uniqueTags.length === 0) throw new Error("No valid tags to add.");
+  const operations = uniqueTags.map(tag => ({ op: "add", path: "/tags/-", value: tag }));
   const ioPath = getIoPath();
 
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/card/${cardId}`, {
@@ -258,18 +316,26 @@ export async function addCardTags(cardId, tags) {
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Add card tags", text));
+    throw fetchResponseError(resp, "Add card tags", text);
   }
   return resp.json();
 }
 
-// Utility: remove tags from a card (PATCH with remove operations)
-export async function removeCardTags(cardId, tags) {
+/** Build JSON Patch ops to remove specific tags (AgilePlace uses `value` to identify the tag string). */
+export function buildRemoveCardTagOperations(tags) {
   if (!Array.isArray(tags) || tags.length === 0) {
     throw new Error("tags must be a non-empty array of strings.");
   }
-  const operations = tags.map(tag => ({ op: "remove", path: "/tags", value: String(tag).trim() })).filter(op => op.value);
+  const operations = tags
+    .map(tag => ({ op: "remove", path: "/tags", value: String(tag).trim() }))
+    .filter(op => op.value);
   if (operations.length === 0) throw new Error("No valid tags to remove.");
+  return operations;
+}
+
+// Utility: remove tags from a card (PATCH with remove operations)
+export async function removeCardTags(cardId, tags) {
+  const operations = buildRemoveCardTagOperations(tags);
   const ioPath = getIoPath();
 
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/card/${cardId}`, {
@@ -280,7 +346,7 @@ export async function removeCardTags(cardId, tags) {
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Remove card tags", text));
+    throw fetchResponseError(resp, "Remove card tags", text);
   }
   return resp.json();
 }
@@ -299,7 +365,7 @@ export async function connectCards(parentId, childIds) {
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Connect cards", text));
+    throw fetchResponseError(resp, "Connect cards", text);
   }
 
   return resp.json();
@@ -318,7 +384,7 @@ export async function connectExistingCards(parentId, childIds) {
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Connect existing cards", text));
+    throw fetchResponseError(resp, "Connect existing cards", text);
   }
 
   return resp.json();
@@ -338,7 +404,7 @@ export async function createCardCommentApi(cardId, text) {
 
   if (!resp.ok) {
     const bodyText = await resp.text();
-    throw new Error(formatFetchError(resp, "Create card comment", bodyText));
+    throw fetchResponseError(resp, "Create card comment", bodyText);
   }
 
   return resp.json().catch(() => ({}));
@@ -362,7 +428,7 @@ export async function assignUsersToCardsApi(cardIds, userIds) {
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Assign users to cards", text));
+    throw fetchResponseError(resp, "Assign users to cards", text);
   }
 
   return resp.json().catch(() => ({}));
@@ -387,23 +453,28 @@ export async function deleteCardConnectionsApi(cardIds, connections) {
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Delete card connections", text));
+    throw fetchResponseError(resp, "Delete card connections", text);
   }
 
   return resp.json().catch(() => ({}));
 }
 
-// Utility: list all cards on a board
-export async function listCards(boardId) {
+// Utility: list cards on a board (GET /io/board/:boardId/card). Supports limit/offset per API docs.
+export async function listCards(boardId, { limit, offset } = {}) {
   const ioPath = getIoPath();
-  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/board/${boardId}/card`, {
+  const params = new URLSearchParams();
+  if (limit !== undefined && limit !== null) params.set("limit", String(limit));
+  if (offset !== undefined && offset !== null) params.set("offset", String(offset));
+  const qs = params.toString();
+  const url = `${API_BASE}${ioPath}/board/${boardId}/card${qs ? `?${qs}` : ""}`;
+  const resp = await fetchWithTimeout(url, {
     method: "GET",
     headers: HEADERS,
   });
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "List cards", text));
+    throw fetchResponseError(resp, "List cards", text);
   }
 
   return resp.json();
@@ -419,7 +490,7 @@ export async function listCardTypes(boardId) {
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "List card types", text));
+    throw fetchResponseError(resp, "List card types", text);
   }
 
   return resp.json();
@@ -437,7 +508,7 @@ export async function listBoardsApi({ search, boards, limit = 200 } = {}) {
   const resp = await fetchWithTimeout(url, { method: "GET", headers: HEADERS });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "List boards", text));
+    throw fetchResponseError(resp, "List boards", text);
   }
   return resp.json();
 }
@@ -451,7 +522,7 @@ export async function getBoard(boardId) {
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Get board", text));
+    throw fetchResponseError(resp, "Get board", text);
   }
   return resp.json();
 }
@@ -489,7 +560,7 @@ export async function updateBoardApi(boardId, updates) {
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Update board", text));
+    throw fetchResponseError(resp, "Update board", text);
   }
   const updated = Object.keys(body);
   const data = resp.status === 204 ? {} : await resp.json().catch(() => ({}));
@@ -505,7 +576,20 @@ export async function archiveBoardApi(boardId) {
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Archive board", text));
+    throw fetchResponseError(resp, "Archive board", text);
+  }
+}
+
+// Utility: restore a board from archive (POST /io/board/:boardId/unarchive)
+export async function unarchiveBoardApi(boardId) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/board/${boardId}/unarchive`, {
+    method: "POST",
+    headers: HEADERS,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "Unarchive board", text);
   }
 }
 
@@ -528,7 +612,56 @@ export async function createBoardApi({ title, description, level, customBoardUrl
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Create board", text));
+    throw fetchResponseError(resp, "Create board", text);
+  }
+
+  return resp.json();
+}
+
+// Utility: duplicate a board (POST /io/board with fromBoardId)
+export async function duplicateBoardApi({
+  fromBoardId,
+  title,
+  description,
+  includeCards = true,
+  includeExistingUsers = true,
+  baseWipOnCardSize,
+  excludeCompletedAndArchiveViolations,
+  isShared,
+  sharedBoardRole,
+} = {}) {
+  const ioPath = getIoPath();
+  if (!fromBoardId || typeof fromBoardId !== "string" || fromBoardId.trim() === "") {
+    throw new Error("fromBoardId is required to duplicate a board.");
+  }
+  if (!title || typeof title !== "string" || title.trim() === "") {
+    throw new Error("title is required to duplicate a board.");
+  }
+
+  const body = {
+    fromBoardId: fromBoardId.trim(),
+    title: title.trim(),
+    includeCards: includeCards ?? true,
+    includeExistingUsers: includeExistingUsers ?? true,
+  };
+
+  if (description !== undefined) body.description = description;
+  if (baseWipOnCardSize !== undefined) body.baseWipOnCardSize = baseWipOnCardSize;
+  if (excludeCompletedAndArchiveViolations !== undefined) {
+    body.excludeCompletedAndArchiveViolations = excludeCompletedAndArchiveViolations;
+  }
+  if (isShared !== undefined) body.isShared = isShared;
+  if (sharedBoardRole !== undefined) body.sharedBoardRole = sharedBoardRole;
+
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/board`, {
+    method: "POST",
+    headers: HEADERS,
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "Duplicate board", text);
   }
 
   return resp.json();
@@ -656,7 +789,7 @@ export async function updateBoardLayoutApi(boardId, layout) {
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Update board layout", text));
+    throw fetchResponseError(resp, "Update board layout", text);
   }
 
   return resp.json().catch(() => ({}));
@@ -675,7 +808,7 @@ export async function getLaneCardCounts(boardId, laneIds) {
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Get lane card counts", text));
+    throw fetchResponseError(resp, "Get lane card counts", text);
   }
   return resp.json();
 }
@@ -690,7 +823,7 @@ export async function getBoardCustomFieldsApi(boardId) {
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Get board custom fields", text));
+    throw fetchResponseError(resp, "Get board custom fields", text);
   }
 
   return resp.json();
@@ -699,10 +832,18 @@ export async function getBoardCustomFieldsApi(boardId) {
 // Utility: update board custom fields (PATCH /io/board/:boardId/customfield)
 export async function updateBoardCustomFieldsApi(boardId, updates) {
   const ioPath = getIoPath();
-  const body = updates && typeof updates === "object" ? updates : {};
-  if (Object.keys(body).length === 0) {
-    throw new Error("At least one custom field update is required.");
+  if (!Array.isArray(updates)) {
+    const receivedType = updates === null ? "null" : typeof updates;
+    throw new Error(
+      `Expected "updates" to be a JSON Patch array (RFC 6902). Got: ${receivedType}.`
+    );
   }
+  if (updates.length === 0) {
+    throw new Error(
+      "Expected \"updates\" to be a non-empty JSON Patch array (RFC 6902)."
+    );
+  }
+  const body = updates;
 
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/board/${boardId}/customfield`, {
     method: "PATCH",
@@ -712,7 +853,7 @@ export async function updateBoardCustomFieldsApi(boardId, updates) {
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Update board custom fields", text));
+    throw fetchResponseError(resp, "Update board custom fields", text);
   }
 
   return resp.json().catch(() => ({}));
@@ -728,7 +869,7 @@ export async function bulkUpdateCardsApi(cardIds, updates) {
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Bulk update cards", text));
+    throw fetchResponseError(resp, "Bulk update cards", text);
   }
   // 202 Accepted - may return empty body
   return resp.status === 204 ? {} : resp.json().catch(() => ({}));
@@ -749,7 +890,7 @@ export async function setCardTags(cardId, tags) {
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Set card tags", text));
+    throw fetchResponseError(resp, "Set card tags", text);
   }
   return resp.json();
 }
@@ -764,7 +905,7 @@ export async function createCardTypeApi(boardId, { name, colorHex, isCardType = 
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Create card type", text));
+    throw fetchResponseError(resp, "Create card type", text);
   }
   return resp.json();
 }
@@ -785,7 +926,7 @@ export async function updateCardTypeApi(boardId, cardTypeId, { name, colorHex, i
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Update card type", text));
+    throw fetchResponseError(resp, "Update card type", text);
   }
   return resp.json();
 }
@@ -799,7 +940,7 @@ export async function deleteCardTypeApi(boardId, cardTypeId) {
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Delete card type", text));
+    throw fetchResponseError(resp, "Delete card type", text);
   }
 }
 
@@ -820,7 +961,7 @@ export async function updateLaneApi(boardId, laneId, { title, description, wipLi
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Update lane", text));
+    throw fetchResponseError(resp, "Update lane", text);
   }
   return resp.json();
 }
@@ -834,7 +975,7 @@ export async function deleteCardApi(cardId) {
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Delete card", text));
+    throw fetchResponseError(resp, "Delete card", text);
   }
 }
 
@@ -848,23 +989,126 @@ export async function batchDeleteCardsApi(cardIds) {
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Batch delete cards", text));
+    throw fetchResponseError(resp, "Batch delete cards", text);
   }
 }
 
-// Utility: move card to lane (PATCH /io/card/:cardId with laneId)
-export async function moveCardToLaneApi(cardId, laneId) {
+/** Compact card summary for tool responses (post-update re-fetch). */
+export function summarizeCard(card) {
+  if (!card) return null;
+  return {
+    id: String(card.id ?? ""),
+    title: card.title ?? "",
+    description: card.description ?? "",
+    laneId: card.laneId ?? card.lane?.id ?? null,
+    boardId: card.board?.id ?? card.boardId ?? null,
+    cardType: card.type?.title ?? card.type?.name ?? card.cardType?.name ?? card.cardType?.title ?? "",
+    priority: card.priority,
+    cardHeader: card.customId?.value ?? card.customId ?? null,
+    tags: Array.isArray(card.tags) ? card.tags : [],
+  };
+}
+
+// Utility: move card to lane (PATCH /io/card/:cardId with laneId; optional WIP override comment)
+export async function moveCardToLaneApi(cardId, laneId, wipOverrideReason) {
+  const operations = [];
+  if (wipOverrideReason && String(wipOverrideReason).trim()) {
+    operations.push({
+      op: "replace",
+      path: "/wipOverrideComment",
+      value: String(wipOverrideReason).trim(),
+    });
+  }
+  operations.push({ op: "replace", path: "/laneId", value: laneId });
+  return patchCardOperations({ cardId, operations, context: "Move card to lane" });
+}
+
+// Search cards by title/customId (GET /io/card). Omit board for account-wide search.
+export async function searchCardsApi({
+  search,
+  boardId,
+  boardIds,
+  limit = 200,
+  offset = 0,
+} = {}) {
+  if (!search || !String(search).trim()) {
+    throw new Error("search is required.");
+  }
   const ioPath = getIoPath();
-  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/card/${cardId}`, {
-    method: "PATCH",
+  const query = String(search).trim();
+
+  async function searchOneBoard(bid) {
+    const params = new URLSearchParams();
+    params.set("search", query);
+    params.set("limit", String(limit));
+    params.set("offset", String(offset));
+    params.set("select", "both");
+    if (bid) params.set("board", String(bid));
+    const url = `${API_BASE}${ioPath}/card?${params.toString()}`;
+    const resp = await fetchWithTimeout(url, { method: "GET", headers: HEADERS });
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw fetchResponseError(resp, "Search cards", text);
+    }
+    return resp.json();
+  }
+
+  const boardsToQuery =
+    boardIds?.length > 0 ? boardIds.map(String) : boardId ? [String(boardId)] : [null];
+
+  const responses = await Promise.all(boardsToQuery.map(bid => searchOneBoard(bid)));
+  const seen = new Set();
+  const cards = [];
+  for (const data of responses) {
+    for (const c of data.cards || []) {
+      const id = String(c.id);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      cards.push({
+        id,
+        title: c.title ?? "",
+        boardId: c.board?.id ?? c.boardId ?? null,
+        boardTitle: c.board?.title ?? null,
+        laneId: c.laneId ?? c.lane?.id ?? null,
+        cardType: c.type?.title ?? c.type?.name ?? "",
+        customId: c.customId?.value ?? c.customId ?? null,
+      });
+    }
+  }
+  return { cards, total: cards.length, search: query };
+}
+
+// List cards in lane(s) via POST /io/card/list
+export async function listCardsInLanesApi(boardId, laneIds, { limit = 500, offset = 0 } = {}) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/card/list`, {
+    method: "POST",
     headers: HEADERS,
-    body: JSON.stringify([{ op: "replace", path: "/laneId", value: laneId }]),
+    body: JSON.stringify({
+      board: String(boardId),
+      lanes: laneIds.map(String),
+      limit,
+      offset,
+      select: "both",
+    }),
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Move card to lane", text));
+    throw fetchResponseError(resp, "List cards in lanes", text);
   }
-  return resp.json();
+  const data = await resp.json();
+  return data.cards || [];
+}
+
+export async function linkExternalToCardApi(cardId, { label, url }) {
+  if (!label?.trim() || !url?.trim()) {
+    throw new Error("label and url are required for external link.");
+  }
+  return patchCardOperations({
+    cardId,
+    operations: [{ op: "add", path: "/externalLink", value: { label: label.trim(), url: url.trim() } }],
+    context: "Link external URL to card",
+  });
 }
 
 // Utility: get dependencies for a specific card
@@ -878,19 +1122,38 @@ export async function getCardDependencies(cardId, includeFaces = true) {
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Get card dependencies", text));
+    throw fetchResponseError(resp, "Get card dependencies", text);
   }
 
   return resp.json();
 }
 
-// Utility: update an existing dependency (PATCH /io/card/dependency)
-export async function updateCardDependencyApi(payload) {
-  const ioPath = getIoPath();
-  const body = payload && typeof payload === "object" ? payload : {};
-  if (Object.keys(body).length === 0) {
-    throw new Error("Dependency update payload is required.");
+function normalizeDependencyUpdates(updates) {
+  const list = Array.isArray(updates) ? updates : [updates];
+  if (list.length === 0) {
+    throw new Error("At least one dependency update is required.");
   }
+  return list.map((item, index) => {
+    const cardId = item?.cardId != null ? String(item.cardId).trim() : "";
+    const dependsOnCardId =
+      item?.dependsOnCardId != null ? String(item.dependsOnCardId).trim() : "";
+    const timing = item?.timing ?? "finishToStart";
+    if (!cardId || !dependsOnCardId) {
+      throw new Error(`Dependency update at index ${index} requires cardId and dependsOnCardId.`);
+    }
+    if (!DEPENDENCY_TIMING_VALUES.includes(timing)) {
+      throw new Error(
+        `Invalid timing "${timing}" at index ${index}. Must be one of: ${DEPENDENCY_TIMING_VALUES.join(", ")}`
+      );
+    }
+    return { cardId, dependsOnCardId, timing };
+  });
+}
+
+// Utility: update dependencies (PATCH /io/card/dependency — body is a JSON array)
+export async function updateCardDependencyApi(updates) {
+  const ioPath = getIoPath();
+  const body = normalizeDependencyUpdates(updates);
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/card/dependency`, {
     method: "PATCH",
     headers: HEADERS,
@@ -899,28 +1162,51 @@ export async function updateCardDependencyApi(payload) {
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Update card dependency", text));
+    throw fetchResponseError(resp, "Update card dependency", text);
   }
 
   return resp.json().catch(() => ({}));
 }
 
-// Utility: delete a dependency (DELETE /io/card/dependency)
-export async function deleteCardDependencyApi(payload) {
+// Utility: delete dependencies (DELETE /io/card/dependency)
+export async function deleteCardDependencyApi({ cardIds, dependsOnCardIds }) {
   const ioPath = getIoPath();
-  const body = payload && typeof payload === "object" ? payload : {};
-  if (Object.keys(body).length === 0) {
-    throw new Error("Dependency delete payload is required.");
+  const ids = Array.isArray(cardIds) ? cardIds.map(String).filter(Boolean) : [];
+  const depIds = Array.isArray(dependsOnCardIds)
+    ? dependsOnCardIds.map(String).filter(Boolean)
+    : [];
+  if (ids.length === 0 || depIds.length === 0) {
+    throw new Error("cardIds and dependsOnCardIds must each be non-empty arrays.");
   }
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/card/dependency`, {
     method: "DELETE",
     headers: HEADERS,
-    body: JSON.stringify(body),
+    body: JSON.stringify({ cardIds: ids, dependsOnCardIds: depIds }),
   });
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Delete card dependency", text));
+    throw fetchResponseError(resp, "Delete card dependency", text);
+  }
+
+  return resp.json().catch(() => ({}));
+}
+
+export async function createCardDependencyApi(cardId, dependsOnCardId, timing = "finishToStart") {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/card/dependency`, {
+    method: "POST",
+    headers: HEADERS,
+    body: JSON.stringify({
+      cardIds: [String(cardId)],
+      dependsOnCardIds: [String(dependsOnCardId)],
+      timing,
+    }),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "Create card dependency", text);
   }
 
   return resp.json().catch(() => ({}));
@@ -937,7 +1223,7 @@ export async function listCardsWithDependencies(boardId) {
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "List cards with dependencies", text));
+    throw fetchResponseError(resp, "List cards with dependencies", text);
   }
 
   return resp.json();
@@ -954,7 +1240,7 @@ export async function getCardWithRelationships(cardId) {
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Get card with relationships", text));
+    throw fetchResponseError(resp, "Get card with relationships", text);
   }
 
   const data = await resp.json();
@@ -971,7 +1257,7 @@ export async function getConnectionParents(cardId) {
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Get connection parents", text));
+    throw fetchResponseError(resp, "Get connection parents", text);
   }
 
   const data = await resp.json();
@@ -989,7 +1275,7 @@ export async function getConnectionChildren(cardId, limit = 200) {
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Get connection children", text));
+    throw fetchResponseError(resp, "Get connection children", text);
   }
 
   const data = await resp.json();
@@ -1000,6 +1286,7 @@ export async function getConnectionChildren(cardId, limit = 200) {
 export function toParentChildSummary(card, relationship) {
   const cardType = card.type?.title ?? card.type?.name ?? card.cardType?.name ?? card.cardType?.title ?? "";
   const laneId = card.laneId ?? card.lane?.id ?? "";
+  const boardId = card.board?.id ?? card.boardId ?? "";
   const summary = {
     id: String(card.id ?? ""),
     title: card.title ?? "",
@@ -1008,6 +1295,10 @@ export function toParentChildSummary(card, relationship) {
     tags: Array.isArray(card.tags) ? card.tags : [],
   };
   if (laneId) summary.laneId = String(laneId);
+  if (boardId) {
+    summary.boardId = String(boardId);
+    if (card.board?.title) summary.boardTitle = card.board.title;
+  }
   if (card.plannedStart) summary.plannedStartDate = card.plannedStart;
   if (card.plannedFinish) summary.plannedFinishDate = card.plannedFinish;
   return summary;
@@ -1022,7 +1313,7 @@ export async function getCardCommentsApi(cardId) {
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Get card comments", text));
+    throw fetchResponseError(resp, "Get card comments", text);
   }
   return resp.json();
 }
@@ -1039,7 +1330,7 @@ export async function updateCardCommentApi(cardId, commentId, text) {
   });
   if (!resp.ok) {
     const bodyText = await resp.text();
-    throw new Error(formatFetchError(resp, "Update card comment", bodyText));
+    throw fetchResponseError(resp, "Update card comment", bodyText);
   }
   return resp.json().catch(() => ({}));
 }
@@ -1052,7 +1343,7 @@ export async function deleteCardCommentApi(cardId, commentId) {
   });
   if (!resp.ok) {
     const bodyText = await resp.text();
-    throw new Error(formatFetchError(resp, "Delete card comment", bodyText));
+    throw fetchResponseError(resp, "Delete card comment", bodyText);
   }
 }
 
@@ -1060,54 +1351,181 @@ export async function deleteCardCommentApi(cardId, commentId) {
 export async function listPlanningSeriesApi() {
   const ioPath = getIoPath();
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/series`, { method: "GET", headers: HEADERS });
-  if (!resp.ok) { const text = await resp.text(); throw new Error(formatFetchError(resp, "List planning series", text)); }
+  if (!resp.ok) { const text = await resp.text(); throw fetchResponseError(resp, "List planning series", text); }
   return resp.json();
 }
 
-export async function createPlanningSeriesApi(payload) {
+export async function createPlanningSeriesApi({
+  label,
+  timeZone,
+  allowAllBoards,
+  boardIds,
+} = {}) {
+  if (!label || typeof label !== "string" || label.trim() === "") {
+    throw new Error("label is required to create a planning series.");
+  }
+  const body = {
+    label: label.trim(),
+    allowAllBoards: allowAllBoards ?? false,
+  };
+  if (timeZone !== undefined && timeZone !== null && String(timeZone).trim() !== "") {
+    body.timeZone = String(timeZone).trim();
+  }
+  if (boardIds !== undefined && boardIds !== null) {
+    body.boardIds = boardIds;
+  }
+
   const ioPath = getIoPath();
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/series`, {
-    method: "POST", headers: HEADERS, body: JSON.stringify(payload && typeof payload === "object" ? payload : {}),
+    method: "POST",
+    headers: HEADERS,
+    body: JSON.stringify(body),
   });
-  if (!resp.ok) { const text = await resp.text(); throw new Error(formatFetchError(resp, "Create planning series", text)); }
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "Create planning series", text);
+  }
   return resp.json();
 }
 
 export async function getPlanningSeriesApi(seriesId) {
   const ioPath = getIoPath();
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/series/${seriesId}`, { method: "GET", headers: HEADERS });
-  if (!resp.ok) { const text = await resp.text(); throw new Error(formatFetchError(resp, "Get planning series", text)); }
+  if (!resp.ok) { const text = await resp.text(); throw fetchResponseError(resp, "Get planning series", text); }
   return resp.json();
 }
 
 export async function updatePlanningSeriesApi(seriesId, updates) {
   const ioPath = getIoPath();
+  const body =
+    updates && typeof updates === "object" && updates.updates && typeof updates.updates === "object"
+      ? updates.updates
+      : updates && typeof updates === "object"
+        ? updates
+        : {};
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/series/${seriesId}`, {
-    method: "PATCH", headers: HEADERS, body: JSON.stringify(updates && typeof updates === "object" ? updates : {}),
+    method: "PATCH",
+    headers: HEADERS,
+    body: JSON.stringify(body),
   });
-  if (!resp.ok) { const text = await resp.text(); throw new Error(formatFetchError(resp, "Update planning series", text)); }
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "Update planning series", text);
+  }
   return resp.json().catch(() => ({}));
+}
+
+function seriesTimestamp(series) {
+  return series?.updatedOn || series?.modifiedOn || series?.lastModified || null;
+}
+
+/** Merge board IDs onto a planning series (GET → merge → PATCH with retry on concurrent edits). */
+export async function addBoardsToPlanningSeriesApi(seriesId, boardIds) {
+  if (!Array.isArray(boardIds) || boardIds.length === 0) {
+    throw new Error("boardIds must be a non-empty array.");
+  }
+  const toAdd = [...new Set(boardIds.map(String))];
+  const MAX_ATTEMPTS = 3;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const series = await getPlanningSeriesApi(seriesId);
+    const beforeTs = seriesTimestamp(series);
+    const existing = Array.isArray(series.boardIds) ? series.boardIds.map(String) : [];
+    const merged = [...new Set([...existing, ...toAdd])];
+    const added = toAdd.filter(id => !existing.includes(id));
+
+    if (added.length === 0) {
+      return { ...series, boardIds: merged, addedBoardIds: [] };
+    }
+
+    await updatePlanningSeriesApi(seriesId, { boardIds: merged });
+    const after = await getPlanningSeriesApi(seriesId);
+    const afterIds = new Set(
+      (Array.isArray(after.boardIds) ? after.boardIds : []).map(String)
+    );
+    const allPresent = toAdd.every(id => afterIds.has(id));
+    const afterTs = seriesTimestamp(after);
+
+    if (allPresent) {
+      const addedBoardIds = toAdd.filter(id => !existing.includes(id));
+      return { ...after, boardIds: [...afterIds], addedBoardIds };
+    }
+
+    if (afterTs && beforeTs && afterTs !== beforeTs && attempt < MAX_ATTEMPTS) {
+      continue;
+    }
+
+    if (attempt === MAX_ATTEMPTS) {
+      throw new Error(
+        `Failed to add all boards to planning series ${seriesId} after ${MAX_ATTEMPTS} attempts (concurrent updates may have overwritten changes). Missing: ${toAdd.filter(id => !afterIds.has(id)).join(", ")}`
+      );
+    }
+  }
+
+  throw new Error(`Failed to add boards to planning series ${seriesId}.`);
 }
 
 export async function deletePlanningSeriesApi(seriesId) {
   const ioPath = getIoPath();
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/series/${seriesId}`, { method: "DELETE", headers: HEADERS });
-  if (!resp.ok) { const text = await resp.text(); throw new Error(formatFetchError(resp, "Delete planning series", text)); }
+  if (!resp.ok) { const text = await resp.text(); throw fetchResponseError(resp, "Delete planning series", text); }
 }
 
-export async function createIncrementApi(seriesId, payload) {
+export async function createIncrementApi(
+  seriesId,
+  { label, startDate, endDate, parentPlanningIncrementId } = {}
+) {
+  if (!seriesId || typeof seriesId !== "string" || seriesId.trim() === "") {
+    throw new Error("seriesId is required to create a planning increment.");
+  }
+  if (!label || typeof label !== "string" || label.trim() === "") {
+    throw new Error("label is required to create a planning increment.");
+  }
+  if (!startDate || typeof startDate !== "string" || startDate.trim() === "") {
+    throw new Error("startDate is required to create a planning increment (YYYY-MM-DD).");
+  }
+  if (!endDate || typeof endDate !== "string" || endDate.trim() === "") {
+    throw new Error("endDate is required to create a planning increment (YYYY-MM-DD).");
+  }
+
+  const body = {
+    label: label.trim(),
+    startDate: startDate.trim(),
+    endDate: endDate.trim(),
+  };
+  if (parentPlanningIncrementId !== undefined) {
+    body.parentPlanningIncrementId = parentPlanningIncrementId;
+  }
+
   const ioPath = getIoPath();
-  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/series/${seriesId}/increment`, {
-    method: "POST", headers: HEADERS, body: JSON.stringify(payload && typeof payload === "object" ? payload : {}),
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/series/${seriesId.trim()}/increment`, {
+    method: "POST",
+    headers: HEADERS,
+    body: JSON.stringify(body),
   });
-  if (!resp.ok) { const text = await resp.text(); throw new Error(formatFetchError(resp, "Create planning increment", text)); }
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "Create planning increment", text);
+  }
   return resp.json();
+}
+
+/** Append a planning increment id to a card (JSON Patch add to /planningIncrementIds/-). */
+export async function assignCardToPlanningIncrementApi(cardId, incrementId) {
+  if (!incrementId || typeof incrementId !== "string" || incrementId.trim() === "") {
+    throw new Error("incrementId is required.");
+  }
+  return patchCardOperations({
+    cardId,
+    operations: [{ op: "add", path: "/planningIncrementIds/-", value: incrementId.trim() }],
+    context: "Assign card to planning increment",
+  });
 }
 
 export async function listIncrementsApi(seriesId) {
   const ioPath = getIoPath();
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/series/${seriesId}/increment`, { method: "GET", headers: HEADERS });
-  if (!resp.ok) { const text = await resp.text(); throw new Error(formatFetchError(resp, "List planning increments", text)); }
+  if (!resp.ok) { const text = await resp.text(); throw fetchResponseError(resp, "List planning increments", text); }
   return resp.json();
 }
 
@@ -1116,14 +1534,14 @@ export async function updateIncrementApi(seriesId, incrementId, updates) {
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/series/${seriesId}/increment/${incrementId}`, {
     method: "PATCH", headers: HEADERS, body: JSON.stringify(updates && typeof updates === "object" ? updates : {}),
   });
-  if (!resp.ok) { const text = await resp.text(); throw new Error(formatFetchError(resp, "Update planning increment", text)); }
+  if (!resp.ok) { const text = await resp.text(); throw fetchResponseError(resp, "Update planning increment", text); }
   return resp.json().catch(() => ({}));
 }
 
 export async function deleteIncrementApi(seriesId, incrementId) {
   const ioPath = getIoPath();
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/series/${seriesId}/increment/${incrementId}`, { method: "DELETE", headers: HEADERS });
-  if (!resp.ok) { const text = await resp.text(); throw new Error(formatFetchError(resp, "Delete planning increment", text)); }
+  if (!resp.ok) { const text = await resp.text(); throw fetchResponseError(resp, "Delete planning increment", text); }
 }
 
 export async function getIncrementStatusApi(seriesId, incrementId, category) {
@@ -1132,7 +1550,7 @@ export async function getIncrementStatusApi(seriesId, incrementId, category) {
     ? `${API_BASE}${ioPath}/series/${seriesId}/increment/${incrementId}/status/${category}`
     : `${API_BASE}${ioPath}/series/${seriesId}/increment/${incrementId}/status`;
   const resp = await fetchWithTimeout(path, { method: "GET", headers: HEADERS });
-  if (!resp.ok) { const text = await resp.text(); throw new Error(formatFetchError(resp, "Get increment status", text)); }
+  if (!resp.ok) { const text = await resp.text(); throw fetchResponseError(resp, "Get increment status", text); }
   return resp.json();
 }
 
@@ -1140,21 +1558,21 @@ export async function getIncrementStatusApi(seriesId, incrementId, category) {
 export async function getCurrentUserApi() {
   const ioPath = getIoPath();
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/user/me`, { method: "GET", headers: HEADERS });
-  if (!resp.ok) { const text = await resp.text(); throw new Error(formatFetchError(resp, "Get current user", text)); }
+  if (!resp.ok) { const text = await resp.text(); throw fetchResponseError(resp, "Get current user", text); }
   return resp.json();
 }
 
 export async function listUsersApi() {
   const ioPath = getIoPath();
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/user`, { method: "GET", headers: HEADERS });
-  if (!resp.ok) { const text = await resp.text(); throw new Error(formatFetchError(resp, "List users", text)); }
+  if (!resp.ok) { const text = await resp.text(); throw fetchResponseError(resp, "List users", text); }
   return resp.json();
 }
 
 export async function getUserByIdApi(userId) {
   const ioPath = getIoPath();
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/user/${userId}`, { method: "GET", headers: HEADERS });
-  if (!resp.ok) { const text = await resp.text(); throw new Error(formatFetchError(resp, "Get user", text)); }
+  if (!resp.ok) { const text = await resp.text(); throw fetchResponseError(resp, "Get user", text); }
   return resp.json();
 }
 
@@ -1162,35 +1580,35 @@ export async function getUserByIdApi(userId) {
 export async function getBoardThroughputReportApi(boardId) {
   const ioPath = getIoPath();
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/reporting/boardHealth/${boardId}/throughput`, { method: "GET", headers: HEADERS });
-  if (!resp.ok) { const text = await resp.text(); throw new Error(formatFetchError(resp, "Get board throughput report", text)); }
+  if (!resp.ok) { const text = await resp.text(); throw fetchResponseError(resp, "Get board throughput report", text); }
   return resp.json();
 }
 
 export async function getBoardWipReportApi(boardId) {
   const ioPath = getIoPath();
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/reporting/boardHealth/${boardId}/wip`, { method: "GET", headers: HEADERS });
-  if (!resp.ok) { const text = await resp.text(); throw new Error(formatFetchError(resp, "Get board WIP report", text)); }
+  if (!resp.ok) { const text = await resp.text(); throw fetchResponseError(resp, "Get board WIP report", text); }
   return resp.json();
 }
 
 export async function getLaneBottleneckReportApi(boardId) {
   const ioPath = getIoPath();
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/reporting/boardHealth/${boardId}/laneBottleneck`, { method: "GET", headers: HEADERS });
-  if (!resp.ok) { const text = await resp.text(); throw new Error(formatFetchError(resp, "Get lane bottleneck report", text)); }
+  if (!resp.ok) { const text = await resp.text(); throw fetchResponseError(resp, "Get lane bottleneck report", text); }
   return resp.json();
 }
 
 export async function getCardStatisticsApi(cardId) {
   const ioPath = getIoPath();
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/card/${cardId}/statistics`, { method: "GET", headers: HEADERS });
-  if (!resp.ok) { const text = await resp.text(); throw new Error(formatFetchError(resp, "Get card statistics", text)); }
+  if (!resp.ok) { const text = await resp.text(); throw fetchResponseError(resp, "Get card statistics", text); }
   return resp.json();
 }
 
 export async function getCardActivityApi(cardId) {
   const ioPath = getIoPath();
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/card/${cardId}/activity`, { method: "GET", headers: HEADERS });
-  if (!resp.ok) { const text = await resp.text(); throw new Error(formatFetchError(resp, "Get card activity", text)); }
+  if (!resp.ok) { const text = await resp.text(); throw fetchResponseError(resp, "Get card activity", text); }
   return resp.json();
 }
 
@@ -1206,7 +1624,7 @@ export async function getCardById(cardId) {
 
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Get card by ID", text));
+    throw fetchResponseError(resp, "Get card by ID", text);
   }
 
   const data = await resp.json();
@@ -1225,39 +1643,66 @@ export async function listAttachmentsApi(cardId) {
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "List attachments", text));
+    throw fetchResponseError(resp, "List attachments", text);
   }
   const data = await resp.json();
   return data.attachments || [];
 }
 
-export async function createAttachmentApi(cardId, fileName, fileContent, description) {
+// eslint-disable-next-line no-control-regex -- intentional: reject control chars in filenames
+const FORBIDDEN_ATTACHMENT_FILENAME = /["\r\n\x00-\x1f]/;
+
+export function assertValidAttachmentFileName(fileName) {
+  if (typeof fileName !== "string" || !fileName.trim()) {
+    throw new Error("fileName must be a non-empty string");
+  }
+  if (FORBIDDEN_ATTACHMENT_FILENAME.test(fileName)) {
+    throw new Error(
+      `fileName contains forbidden characters (quotes, CR/LF, or control chars): ${JSON.stringify(fileName)}`
+    );
+  }
+}
+
+function attachmentBytes(fileContent, contentEncoding = "utf8") {
+  if (Buffer.isBuffer(fileContent)) return fileContent;
+  if (fileContent instanceof Uint8Array) return Buffer.from(fileContent);
+  if (typeof fileContent !== "string") {
+    throw new Error("fileContent must be a string, Buffer, or Uint8Array");
+  }
+  if (contentEncoding === "base64") {
+    return Buffer.from(fileContent, "base64");
+  }
+  return Buffer.from(fileContent, "utf8");
+}
+
+export async function createAttachmentApi(
+  cardId,
+  fileName,
+  fileContent,
+  description,
+  { contentType, contentEncoding = "utf8" } = {}
+) {
+  assertValidAttachmentFileName(fileName);
   const ioPath = getIoPath();
-  const boundary = "----MCPBoundary" + Date.now();
-  const body = [
-    `--${boundary}`,
-    'Content-Disposition: form-data; name="description"',
-    "",
-    description ?? "",
-    `--${boundary}`,
-    `Content-Disposition: form-data; name="file"; filename="${fileName}"`,
-    "Content-Type: application/octet-stream",
-    "",
-    typeof fileContent === "string" ? fileContent : String(fileContent),
-    `--${boundary}--`,
-  ].join("\r\n");
+  const bytes = attachmentBytes(fileContent, contentEncoding);
+  const form = new FormData();
+  if (description !== undefined && description !== null && description !== "") {
+    form.append("description", String(description));
+  }
+  const blob = new Blob([bytes], { type: contentType || "application/octet-stream" });
+  form.append("file", blob, fileName);
 
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/card/${cardId}/attachment`, {
     method: "POST",
     headers: {
-      ...HEADERS,
-      "Content-Type": `multipart/form-data; boundary=${boundary}`,
+      Authorization: HEADERS.Authorization,
+      Accept: HEADERS.Accept,
     },
-    body,
+    body: form,
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Create attachment", text));
+    throw fetchResponseError(resp, "Create attachment", text);
   }
   return resp.json();
 }
@@ -1270,7 +1715,7 @@ export async function deleteAttachmentApi(cardId, attachmentId) {
   );
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Delete attachment", text));
+    throw fetchResponseError(resp, "Delete attachment", text);
   }
 }
 
@@ -1286,7 +1731,7 @@ export async function listAutomationsApi(boardId) {
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "List automations", text));
+    throw fetchResponseError(resp, "List automations", text);
   }
   const data = await resp.json();
   return data.cardAutomations || [];
@@ -1300,7 +1745,7 @@ export async function getAutomationApi(boardId, automationId) {
   );
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Get automation", text));
+    throw fetchResponseError(resp, "Get automation", text);
   }
   return resp.json();
 }
@@ -1314,7 +1759,7 @@ export async function triggerBoardCustomEventApi(boardId, eventName) {
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Trigger board custom event", text));
+    throw fetchResponseError(resp, "Trigger board custom event", text);
   }
   return resp.json().catch(() => ({}));
 }
@@ -1328,7 +1773,7 @@ export async function triggerCardCustomEventApi(cardId, eventName) {
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Trigger card custom event", text));
+    throw fetchResponseError(resp, "Trigger card custom event", text);
   }
   return resp.json().catch(() => ({}));
 }
@@ -1341,7 +1786,7 @@ export async function getAutomationAuditApi(boardId, automationId) {
   );
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Get automation audit", text));
+    throw fetchResponseError(resp, "Get automation audit", text);
   }
   return resp.json();
 }
@@ -1358,7 +1803,7 @@ export async function exportBoardHistoryApi(boardId) {
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Export board history", text));
+    throw fetchResponseError(resp, "Export board history", text);
   }
   return resp.text();
 }
@@ -1375,7 +1820,7 @@ export async function listScoringTemplatesApi(boardId) {
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "List scoring templates", text));
+    throw fetchResponseError(resp, "List scoring templates", text);
   }
   const data = await resp.json();
   return Array.isArray(data) ? data : data.templates || [];
@@ -1389,7 +1834,7 @@ export async function getBoardScoringApi(boardId) {
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Get board scoring", text));
+    throw fetchResponseError(resp, "Get board scoring", text);
   }
   return resp.json();
 }
@@ -1406,7 +1851,7 @@ export async function setScoringSessionApi(boardId, templateId, templateVersion,
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Set scoring session", text));
+    throw fetchResponseError(resp, "Set scoring session", text);
   }
 }
 
@@ -1422,7 +1867,7 @@ export async function updateCardScoreApi(boardId, cardId, payload) {
   );
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Update card score", text));
+    throw fetchResponseError(resp, "Update card score", text);
   }
 }
 
@@ -1435,7 +1880,7 @@ export async function applyScoringToCardsApi(boardId, cardIds) {
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Apply scoring to cards", text));
+    throw fetchResponseError(resp, "Apply scoring to cards", text);
   }
 }
 
@@ -1448,7 +1893,7 @@ export async function deleteCardScoresApi(boardId, cardIds) {
   });
   if (!resp.ok) {
     const text = await resp.text();
-    throw new Error(formatFetchError(resp, "Delete card scores", text));
+    throw fetchResponseError(resp, "Delete card scores", text);
   }
 }
 

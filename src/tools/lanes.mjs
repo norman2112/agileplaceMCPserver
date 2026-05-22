@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CONFIG, configSourceLabel } from "../config.mjs";
+import { CONFIG } from "../config.mjs";
 import { respondText, wrapToolHandler } from "../helpers.mjs";
 import {
   getBoard,
@@ -7,6 +7,8 @@ import {
   updateBoardLayoutApi,
   updateLaneApi,
 } from "../api/agileplace.mjs";
+import { findLanesByName } from "../lane-utils.mjs";
+import { laneLayoutNodeSchema } from "../patch-schemas.mjs";
 
 const { DEFAULT_BOARD_ID } = CONFIG;
 
@@ -46,22 +48,33 @@ function findLaneInTree(lanes, laneId) {
   return null;
 }
 
-async function mutateBoardLayoutWithRetry(boardId, mutator) {
-  let { lanes, layoutChecksum } = await getBoardLayoutWithChecksum(boardId);
-  let layout = { lanes: JSON.parse(JSON.stringify(lanes)), layoutChecksum };
-  layout = await mutator(layout);
-  try {
-    return await updateBoardLayoutApi(boardId, layout);
-  } catch (err) {
-    const message = err?.message || "";
-    if (!/409|412|checksum/i.test(message)) {
-      throw err;
-    }
-    ({ lanes, layoutChecksum } = await getBoardLayoutWithChecksum(boardId));
-    layout = { lanes: JSON.parse(JSON.stringify(lanes)), layoutChecksum };
-    layout = await mutator(layout);
-    return await updateBoardLayoutApi(boardId, layout);
+function isLayoutConflictError(err) {
+  if (err?.statusCode === 409 || err?.statusCode === 412) return true;
+  if (err?.statusCode) return false;
+  const message = err?.message || "";
+  if (/409|412|checksum/i.test(message)) {
+    console.warn(
+      "mutateBoardLayoutWithRetry: inferring layout conflict from message (statusCode missing)"
+    );
+    return true;
   }
+  return false;
+}
+
+async function mutateBoardLayoutWithRetry(boardId, mutator, { maxAttempts = 3 } = {}) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const { lanes, layoutChecksum } = await getBoardLayoutWithChecksum(boardId);
+    let layout = { lanes: JSON.parse(JSON.stringify(lanes)), layoutChecksum };
+    layout = await mutator(layout);
+    try {
+      return await updateBoardLayoutApi(boardId, layout);
+    } catch (err) {
+      if (!isLayoutConflictError(err) || attempt === maxAttempts) {
+        throw err;
+      }
+    }
+  }
+  throw new Error(`Failed to update board ${boardId} layout after ${maxAttempts} attempts.`);
 }
 
 // ---------------------------------------------------------------------------
@@ -88,7 +101,7 @@ const CLASS_TYPE_CARD_STATUS = {
  *  - Vertical parent → sum(children.columns) must equal parent.columns;
  *    redistribute proportionally if it doesn't
  */
-function normalizeLayoutTree(lanes, parentColumns = null, parentClassType = null) {
+export function normalizeLayoutTree(lanes, _parentColumns = null, parentClassType = null) {
   if (!Array.isArray(lanes)) return [];
 
   return lanes.map((lane, idx) => {
@@ -127,8 +140,12 @@ function normalizeLayoutTree(lanes, parentColumns = null, parentClassType = null
       // Determine effective layout mode for children
       let effectiveMode;
       if (hasExplicitVerticalChild || hasColumnSplit) {
-        // User wants side-by-side children → columns must sum to parent
+        // User wants side-by-side children → parent must be vertical.
+        // If we only redistribute columns but keep a horizontal parent, the
+        // server rejects the layout because horizontal parents require each
+        // child to match parent columns exactly.
         effectiveMode = "vertical";
+        normalized.orientation = "vertical";
       } else {
         effectiveMode = normalized.orientation;
       }
@@ -167,7 +184,7 @@ function redistributeChildColumns(children, parentColumns) {
 
   // Proportional redistribution
   const scale = parentColumns / currentSum;
-  let distributed = children.map(c => Math.max(1, Math.round(c.columns * scale)));
+  const distributed = children.map(c => Math.max(1, Math.round(c.columns * scale)));
 
   // Fix rounding drift
   let drift = distributed.reduce((s, v) => s + v, 0) - parentColumns;
@@ -203,9 +220,28 @@ function redistributeChildColumns(children, parentColumns) {
  * Validate layout tree AFTER normalization. Returns an array of error strings.
  * If errors remain, we return them to the caller instead of a cryptic 422.
  */
-function validateLayoutTree(lanes, parentColumns = null, path = "root") {
+function validateLayoutTree(lanes, _parentColumns = null, path = "root") {
   const errors = [];
   if (!Array.isArray(lanes)) return errors;
+
+  const topLevelIndexMap = new Map();
+  if (path === "root") {
+    lanes.forEach((lane, idx) => {
+      const key = Number.isInteger(lane.index) ? lane.index : idx;
+      const arr = topLevelIndexMap.get(key) || [];
+      arr.push(
+        lane.title ? `lanes[${idx}] "${lane.title}"` : `lanes[${idx}]`
+      );
+      topLevelIndexMap.set(key, arr);
+    });
+    for (const [indexValue, laneRefs] of topLevelIndexMap.entries()) {
+      if (laneRefs.length > 1) {
+        errors.push(
+          `Top-level duplicate index ${indexValue}: ${laneRefs.join(", ")}`
+        );
+      }
+    }
+  }
 
   lanes.forEach((lane, idx) => {
     const loc = `${path}[${idx}]${lane.title ? ` ("${lane.title}")` : ""}`;
@@ -218,7 +254,9 @@ function validateLayoutTree(lanes, parentColumns = null, path = "root") {
       children.forEach((child, ci) => {
         if (child.columns !== lane.columns) {
           errors.push(
-            `${loc} → child[${ci}]: horizontal parent has columns=${lane.columns} but child has columns=${child.columns}. They must match.`
+            `${loc} → child[${ci}]${
+              child.title ? ` ("${child.title}")` : ""
+            }: horizontal parent has columns=${lane.columns} but child has columns=${child.columns}. They must match.`
           );
         }
       });
@@ -256,7 +294,7 @@ export function registerLaneTools(mcp) {
       const resolvedBoardId = boardId || DEFAULT_BOARD_ID;
       if (!resolvedBoardId) {
         throw new Error(
-          `Board ID is required. Provide "boardId" or set AGILEPLACE_BOARD_ID in ${configSourceLabel()}.`
+          'Board ID is required. Provide "boardId".'
         );
       }
       const board = await getBoard(resolvedBoardId);
@@ -279,12 +317,35 @@ export function registerLaneTools(mcp) {
     })
   );
 
+  mcp.registerTool(
+    "findLane",
+    {
+      description:
+        "Find lanes on a board by title substring (case-insensitive). Returns id, title, wipLimit, isDefaultDropLane. Use exact=true for full title match.",
+      inputSchema: {
+        boardId: z.string().optional(),
+        namePattern: z.string(),
+        exact: z.boolean().optional(),
+      },
+    },
+    wrapToolHandler("findLane", async ({ boardId, namePattern, exact }) => {
+      const resolvedBoardId = boardId || DEFAULT_BOARD_ID;
+      if (!resolvedBoardId) throw new Error('Board ID is required. Provide "boardId".');
+      const board = await getBoard(resolvedBoardId);
+      const matches = findLanesByName(board.lanes || [], namePattern, { exact: !!exact });
+      return respondText(
+        matches.length ? `Found ${matches.length} lane(s) matching "${namePattern}"` : `No lanes match "${namePattern}"`,
+        JSON.stringify({ boardId: resolvedBoardId, matches }, null, 2)
+      );
+    })
+  );
+
   // Update lane
   mcp.registerTool(
     "updateLane",
     {
       description:
-        "Update a lane. Partial updates - only include fields to change. Supported: title, description, wipLimit, isDefaultDropLane, cardStatus (notStarted/started/finished).",
+        "Rename or adjust a single existing lane in place via PATCH /io/board/:boardId/lane/:laneId — same lane ID, cards, and history are preserved (unlike cloneBoardLayout, which replaces the whole layout). Partial updates: only send fields to change. Supported: title (rename), description, wipLimit, isDefaultDropLane, cardStatus (notStarted|started|finished). This is the lane analogue to targeted card updates (e.g. setCardCustomFields / per-card bulkUpdateCards): use it for terminology or WIP tweaks without touching layout structure.",
       inputSchema: {
         boardId: z.string(),
         laneId: z.string(),
@@ -327,7 +388,7 @@ export function registerLaneTools(mcp) {
       const resolvedBoardId = boardId || DEFAULT_BOARD_ID;
       if (!resolvedBoardId) {
         throw new Error(
-          `Board ID is required. Provide "boardId" or set AGILEPLACE_BOARD_ID in ${configSourceLabel()}.`
+          'Board ID is required. Provide "boardId".'
         );
       }
       const layout = await getBoardLayoutWithChecksum(resolvedBoardId);
@@ -456,51 +517,37 @@ export function registerLaneTools(mcp) {
     wrapToolHandler(
       "removeLane",
       async ({ boardId, laneId, force }) => {
-        const { lanes } = await getBoardLayoutWithChecksum(boardId);
-        const found = findLaneInTree(lanes, laneId);
-        if (!found) {
-          throw new Error(`Lane ${laneId} not found on board ${boardId}.`);
-        }
-        const lane = found.lane;
-        if (
-          Array.isArray(lane.children) &&
-          lane.children.length > 0 &&
-          !force
-        ) {
-          throw new Error(
-            "Lane has child lanes. Use force=true to remove lane and all children."
-          );
-        }
-
-        const laneCounts = await getLaneCardCounts(boardId, laneId);
-        const countEntry = Array.isArray(laneCounts.lanes)
-          ? laneCounts.lanes.find(l => String(l.id) === String(laneId))
-          : laneCounts;
-        const cardCount = countEntry?.cardCount ?? countEntry?.cards ?? 0;
-        if (cardCount && cardCount > 0) {
-          throw new Error(
-            `Lane contains ${cardCount} card(s). Move or delete cards first before removing this lane.`
-          );
-        }
-
         const result = await mutateBoardLayoutWithRetry(
           boardId,
           async layout => {
             const rootLanes = layout.lanes || [];
             const target = findLaneInTree(rootLanes, laneId);
             if (!target) {
+              throw new Error(`Lane ${laneId} not found on board ${boardId}.`);
+            }
+            const lane = target.lane;
+            const laneTitle = lane.title || lane.name || laneId;
+            if (Array.isArray(lane.children) && lane.children.length > 0 && !force) {
               throw new Error(
-                `Lane ${laneId} not found during layout mutation.`
+                `Lane "${laneTitle}" (${laneId}) has child lanes. Use force=true to remove the lane and all children.`
               );
             }
-            const siblings = target.siblings || rootLanes;
-            const idx = siblings.findIndex(
-              l => String(l.id) === String(laneId)
-            );
-            if (idx === -1) {
+
+            const laneCounts = await getLaneCardCounts(boardId, laneId);
+            const countEntry = Array.isArray(laneCounts.lanes)
+              ? laneCounts.lanes.find(l => String(l.id) === String(laneId))
+              : laneCounts;
+            const cardCount = countEntry?.cardCount ?? countEntry?.cards ?? 0;
+            if (cardCount && cardCount > 0) {
               throw new Error(
-                `Lane ${laneId} not found in siblings array.`
+                `Lane "${laneTitle}" (${laneId}) contains ${cardCount} card(s). Move or delete cards before removing this lane.`
               );
+            }
+
+            const siblings = target.siblings || rootLanes;
+            const idx = siblings.findIndex(l => String(l.id) === String(laneId));
+            if (idx === -1) {
+              throw new Error(`Lane ${laneId} not found in siblings array during layout mutation.`);
             }
             siblings.splice(idx, 1);
             reindexLanes(siblings);
@@ -652,29 +699,62 @@ export function registerLaneTools(mcp) {
         "• Children indexes are auto-set from array position.",
         "• Horizontal parent: all children MUST have columns equal to the parent's columns.",
         "• Vertical parent: sum of children columns MUST equal parent columns. If it doesn't, columns are redistributed proportionally.",
+        "• Auto-correction order is deterministic: IDs stripped → defaults applied → child indexes recalculated → vertical redistribution / horizontal full-width normalization → validation checks.",
+        "• Local validation runs after auto-correction and mirrors the known server structural checks, but server-side rules may evolve independently.",
+        "• If a lane has children, that lane cannot remain isDefaultDropLane=true. This tool will move that flag to the first child and return a warning.",
+        "• Mixed vertical/horizontal nesting caveat: children redistributed under vertical parents may fail later horizontal constraints if reoriented incompatibly.",
         "• If parent has columns=1 but multiple vertical children, that's unsolvable (can't split 1 into N≥2). Set parent columns ≥ number of vertical children.",
+        "• dryRun=true: run strip/normalize/validate and return the resulting lanes + warnings without calling the API.",
       ].join("\n"),
       inputSchema: {
         boardId: z.string(),
+        dryRun: z
+          .boolean()
+          .optional()
+          .describe("If true, return normalized layout and warnings only; do not update the board."),
         layout: z.object({
-          lanes: z.array(z.any()),
+          lanes: z.array(laneLayoutNodeSchema),
         }),
       },
     },
     wrapToolHandler(
       "cloneBoardLayout",
-      async ({ boardId, layout }) => {
+      async ({ boardId, layout, dryRun }) => {
+        const warnings = [];
         const stripIds = lanes => {
           if (!Array.isArray(lanes)) return [];
           return lanes.map(lane => {
-            const { id, children, ...rest } = lane;
-            const cloned = { ...rest };
-            cloned.children = stripIds(children || []);
+            const cloned = { ...lane };
+            delete cloned.id;
+            cloned.children = stripIds(cloned.children || []);
             return cloned;
           });
         };
 
+        const relocateDefaultDropLaneFlags = (lanes, path = "lanes") => {
+          if (!Array.isArray(lanes)) return;
+          lanes.forEach((lane, idx) => {
+            const lanePath = `${path}[${idx}]`;
+            const children = Array.isArray(lane.children) ? lane.children : [];
+            if (lane.isDefaultDropLane && children.length > 0) {
+              lane.isDefaultDropLane = false;
+              if (!children[0].isDefaultDropLane) {
+                children[0].isDefaultDropLane = true;
+              }
+              warnings.push(
+                `Moved isDefaultDropLane from ${lanePath}${
+                  lane.title ? ` ("${lane.title}")` : ""
+                } to ${lanePath}.children[0]${
+                  children[0].title ? ` ("${children[0].title}")` : ""
+                } because default drop lanes cannot have children.`
+              );
+            }
+            relocateDefaultDropLaneFlags(children, `${lanePath}.children`);
+          });
+        };
+
         let newLanes = stripIds(layout.lanes || []);
+        relocateDefaultDropLaneFlags(newLanes);
         newLanes = normalizeLayoutTree(newLanes);
         reindexLanes(newLanes);
 
@@ -683,9 +763,22 @@ export function registerLaneTools(mcp) {
         if (validationErrors.length > 0) {
           return respondText(
             "Layout validation failed — the API would reject this layout with a 422.",
+            warnings.length > 0
+              ? `Warnings:\n${warnings.map((w, i) => `  ${i + 1}. ${w}`).join("\n")}`
+              : "",
             "The following structural problems could not be auto-corrected:",
             validationErrors.map((e, i) => `  ${i + 1}. ${e}`).join("\n"),
             "Fix the layout and retry."
+          );
+        }
+
+        if (dryRun) {
+          return respondText(
+            `Dry run for board ${boardId}: layout is valid after normalization (not applied).`,
+            warnings.length > 0
+              ? `Warnings:\n${warnings.map((w, i) => `  ${i + 1}. ${w}`).join("\n")}`
+              : "Warnings: none",
+            `Normalized layout JSON:\n${JSON.stringify({ lanes: newLanes, dryRun: true }, null, 2)}`
           );
         }
 
@@ -699,6 +792,9 @@ export function registerLaneTools(mcp) {
 
         return respondText(
           `Cloned layout onto board ${boardId} (all existing lanes replaced)`,
+          warnings.length > 0
+            ? `Warnings:\n${warnings.map((w, i) => `  ${i + 1}. ${w}`).join("\n")}`
+            : "Warnings: none",
           JSON.stringify(result, null, 2)
         );
       }

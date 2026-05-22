@@ -1,6 +1,6 @@
 import { CONFIG, configSourceLabel } from "../config.mjs";
 import { fetchWithTimeout } from "../helpers.mjs";
-import { formatFetchError } from "./agileplace.mjs";
+import { fetchResponseError } from "./agileplace.mjs";
 
 const {
   OKR_BASE,
@@ -22,10 +22,14 @@ export function getOkrRegion() {
 let okrAccessToken = null;
 let okrTokenExpiry = null;
 
+function clearOkrTokenCache() {
+  okrAccessToken = null;
+  okrTokenExpiry = null;
+}
+
 // OKR OAuth2 token exchange
 // Token endpoint: https://<region>.id.planview.com/io/v1/oauth2/token
 export async function getOkrAccessToken() {
-  // Return cached token if still valid (with 5 minute buffer)
   if (okrAccessToken && okrTokenExpiry && Date.now() < okrTokenExpiry - 300000) {
     return okrAccessToken;
   }
@@ -60,12 +64,11 @@ export async function getOkrAccessToken() {
 
     if (!resp.ok) {
       const text = await resp.text();
-      throw new Error(`Token exchange failed: ${resp.status} ${resp.statusText} - ${text}`);
+      throw fetchResponseError(resp, "OKR token exchange", text);
     }
 
     const data = await resp.json();
     okrAccessToken = data.access_token;
-    // Default to 1 hour expiry if not provided, with 5 minute buffer
     const expiresIn = (data.expires_in || 3600) * 1000;
     okrTokenExpiry = Date.now() + expiresIn;
     return okrAccessToken;
@@ -74,90 +77,128 @@ export async function getOkrAccessToken() {
   }
 }
 
-// OKR HTTP client helper
-export async function fetchOkrJson(path, queryParams = {}) {
+async function resolveOkrAccessToken() {
   if (!OKR_BASE) {
     throw new Error(
       `OKR integration not configured. Set OKR_BASE_URL in ${configSourceLabel()}.`
     );
   }
-
-  // Use OKR_TOKEN if provided, otherwise exchange OAuth2 credentials for token
-  let accessToken;
   if (OKR_TOKEN) {
-    accessToken = OKR_TOKEN;
-  } else if (OKR_CLIENT_ID && OKR_CLIENT_SECRET) {
-    accessToken = await getOkrAccessToken();
-  } else {
-    throw new Error(
-      `OKR integration not configured. Set OKR_TOKEN or (OKR_CLIENT_ID and OKR_CLIENT_SECRET) in ${configSourceLabel()}.`
+    return OKR_TOKEN;
+  }
+  if (OKR_CLIENT_ID && OKR_CLIENT_SECRET) {
+    return getOkrAccessToken();
+  }
+  throw new Error(
+    `OKR integration not configured. Set OKR_TOKEN or (OKR_CLIENT_ID and OKR_CLIENT_SECRET) in ${configSourceLabel()}.`
+  );
+}
+
+/**
+ * Run an OKR HTTP call with one 401 refresh-and-retry (OAuth2 and static OKR_TOKEN).
+ */
+async function withOkrAuth(fn) {
+  let accessToken = await resolveOkrAccessToken();
+
+  const run = async token => fn(token);
+
+  try {
+    return await run(accessToken);
+  } catch (err) {
+    if (err?.statusCode !== 401) {
+      throw err;
+    }
+    if (!OKR_TOKEN) {
+      clearOkrTokenCache();
+      accessToken = await getOkrAccessToken();
+    }
+    return await run(accessToken);
+  }
+}
+
+function okrErrorFromResponse(resp, operation, text) {
+  if (resp.status === 401 || resp.status === 403) {
+    return new Error(
+      `${operation} failed: ${resp.status} ${resp.statusText} - Check OKR credentials permissions. ${text.slice(0, 200)}`
     );
   }
+  if (resp.status === 429) {
+    return new Error(
+      `${operation} failed: ${resp.status} ${resp.statusText} - Rate limit exceeded. ${text.slice(0, 200)}`
+    );
+  }
+  return fetchResponseError(resp, operation, text);
+}
 
+// OKR HTTP client helper
+export async function fetchOkrJson(path, queryParams = {}) {
   const queryString = new URLSearchParams(
     Object.entries(queryParams).filter(([_, v]) => v !== undefined && v !== null)
   ).toString();
   const url = `${OKR_BASE}/api/rest/v1${path}${queryString ? `?${queryString}` : ""}`;
+  const operation = path.includes("/key-results") ? "Get key results" : "List objectives";
 
-  const resp = await fetchWithTimeout(
-    url,
-    {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: "application/json",
-      },
-    },
-    OKR_FETCH_TIMEOUT_MS
-  );
-
-  if (!resp.ok) {
-    const text = await resp.text();
-    const operation = path.includes("/key-results") ? "Get key results" : "List objectives";
-
-    // If 401 (Unauthorized), token might be expired - clear cache and retry once
-    if (resp.status === 401 && !OKR_TOKEN) {
-      okrAccessToken = null;
-      okrTokenExpiry = null;
-
-      const freshToken = await getOkrAccessToken();
-      const retryResp = await fetchWithTimeout(
-        url,
-        {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${freshToken}`,
-            Accept: "application/json",
-          },
+  return withOkrAuth(async accessToken => {
+    const resp = await fetchWithTimeout(
+      url,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/json",
         },
-        OKR_FETCH_TIMEOUT_MS
-      );
+      },
+      OKR_FETCH_TIMEOUT_MS
+    );
 
-      if (retryResp.ok) {
-        return retryResp.json();
-      }
-      const retryText = await retryResp.text();
-      throw new Error(
-        `${operation} failed: ${retryResp.status} ${retryResp.statusText} - Token refresh attempted but still failed. ${retryText.slice(0, 200)}`
-      );
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw okrErrorFromResponse(resp, `OKR ${operation}`, text);
     }
 
-    if (resp.status === 401 || resp.status === 403) {
-      throw new Error(
-        `${operation} failed: ${resp.status} ${resp.statusText} - Check OKR credentials permissions. ${text.slice(0, 200)}`
-      );
-    }
-    if (resp.status === 429) {
-      throw new Error(
-        `${operation} failed: ${resp.status} ${resp.statusText} - Rate limit exceeded. ${text.slice(0, 200)}`
-      );
-    }
+    return resp.json();
+  });
+}
 
-    throw new Error(formatFetchError(resp, `OKR ${operation}`, text));
+/** Build PATCH body with only defined, non-null fields (snake_case API keys). */
+export function buildOkrPatchBody(fields) {
+  const body = {};
+  for (const [key, value] of Object.entries(fields || {})) {
+    if (value !== undefined && value !== null) {
+      body[key] = value;
+    }
   }
+  if (Object.keys(body).length === 0) {
+    throw new Error("At least one field to update is required.");
+  }
+  return body;
+}
 
-  return resp.json();
+/** POST/PATCH/DELETE to Planview OKR REST API (write operations). */
+export async function mutateOkrJson(path, { method = "POST", body } = {}) {
+  const url = `${OKR_BASE}/api/rest/v1${path}`;
+
+  return withOkrAuth(async accessToken => {
+    const resp = await fetchWithTimeout(
+      url,
+      {
+        method,
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      },
+      OKR_FETCH_TIMEOUT_MS
+    );
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw okrErrorFromResponse(resp, `OKR ${method} ${path}`, text);
+    }
+    return resp.json().catch(() => ({}));
+  });
 }
 
 export { OKR_DEFAULT_LIMIT };
-

@@ -1,6 +1,9 @@
 import { CONFIG } from "../config.mjs";
 import { respondText, wrapToolHandler } from "../helpers.mjs";
 import { getOkrRegion } from "../api/okr.mjs";
+import { listAccountNames, getDefaultAccountName } from "../accounts.mjs";
+import { buildToolCatalog, formatToolCatalogText } from "../tool-catalog.mjs";
+import { PACKAGE_VERSION } from "../version.mjs";
 
 export function registerUtilityTools(mcp, { healthServer } = {}) {
   mcp.registerTool(
@@ -19,18 +22,29 @@ export function registerUtilityTools(mcp, { healthServer } = {}) {
 
       const warnings = [];
 
+      function safeHost(url) {
+        if (!url) return null;
+        try {
+          return new URL(url).hostname;
+        } catch {
+          return null;
+        }
+      }
+
       const healthInfo = {
         ok: true,
         server: "agileplace-mcp",
-        version: "1.4.0",
+        version: PACKAGE_VERSION,
         config: {
           agileplace: {
-            apiBase: API_BASE,
+            apiHost: safeHost(API_BASE),
+            hasApiBase: !!API_BASE,
             hasToken: !!API_TOKEN,
             defaultBoardId: DEFAULT_BOARD_ID || "not set",
           },
           okr: {
-            baseUrl: OKR_BASE || "not set",
+            apiHost: safeHost(OKR_BASE),
+            hasApiBase: !!OKR_BASE,
             hasClientId: !!OKR_CLIENT_ID,
             hasClientSecret: !!OKR_CLIENT_SECRET,
             hasDirectToken: !!OKR_TOKEN,
@@ -55,7 +69,7 @@ export function registerUtilityTools(mcp, { healthServer } = {}) {
       };
 
       if (healthInfo.config.agileplace.defaultBoardId === "not set") {
-        warnings.push("Warning: AGILEPLACE_BOARD_ID is not set in Claude Desktop config or process environment variables");
+        warnings.push("Warning: No default board is configured; provide boardId explicitly when required.");
       }
       if (!healthInfo.config.okr.configured) {
         warnings.push("Warning: OKR integration not configured. Set OKR_BASE_URL and (OKR_CLIENT_ID/OKR_CLIENT_SECRET) or OKR_TOKEN in Claude Desktop config or process environment variables");
@@ -66,6 +80,49 @@ export function registerUtilityTools(mcp, { healthServer } = {}) {
         `Status: ${healthInfo.ok ? "Healthy" : "Unhealthy"}`,
         `Configuration:\n${JSON.stringify(healthInfo.config, null, 2)}`,
         warnings.length > 0 ? warnings.join("\n") : ""
+      );
+    })
+  );
+
+  mcp.registerTool(
+    "listAccounts",
+    {
+      description:
+        "List configured AgilePlace account aliases and which alias is default. Tool calls should reference these alias names (for example, \"default\"), not the underlying tenant URL.",
+      inputSchema: {},
+    },
+    wrapToolHandler("listAccounts", async () => {
+      const result = {
+        accounts: listAccountNames(),
+        default: getDefaultAccountName(),
+      };
+      return {
+        structuredContent: result,
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    })
+  );
+
+  mcp.registerTool(
+    "listToolCatalog",
+    {
+      description:
+        "List AgilePlace MCP tools by category (Cards, Lanes, Planning, OKR, etc.). batch* tools run per-card or parallel; bulk* tools apply one operation to many cards via a single API call where supported.",
+      inputSchema: {},
+    },
+    wrapToolHandler("listToolCatalog", async () => {
+      const catalog = buildToolCatalog(mcp);
+      const text = formatToolCatalogText(catalog);
+      const tools = Object.values(catalog).flat();
+      return respondText(
+        "AgilePlace MCP tool catalog",
+        text,
+        `\nStructured index (${tools.length} tools):\n${JSON.stringify(tools.map(t => ({
+          name: t.name,
+          description: t.description,
+          category: t.category,
+          tags: t.tags,
+        })), null, 2)}`
       );
     })
   );

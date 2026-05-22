@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CONFIG, configSourceLabel } from "../config.mjs";
+import { CONFIG } from "../config.mjs";
 import { respondText, wrapToolHandler } from "../helpers.mjs";
 import {
   listCardTypes as listCardTypesApi,
@@ -11,13 +11,21 @@ import {
 
 const { DEFAULT_BOARD_ID } = CONFIG;
 
+export function validateSetupCardTypesDeleteFlags(deleteStockTypes, confirmDeleteStockTypes) {
+  if (deleteStockTypes === true && confirmDeleteStockTypes !== true) {
+    throw new Error(
+      "deleteStockTypes is destructive. Set confirmDeleteStockTypes: true to confirm deletion of pre-existing card types."
+    );
+  }
+}
+
 export function registerCardTypeTools(mcp) {
   // List available card types
   mcp.registerTool(
     "listCardTypes",
     {
       description:
-        "List available card types for a board. Returns card type IDs and names. If boardId is not provided, defaults to AGILEPLACE_BOARD_ID from Claude Desktop config (`claude_desktop_config.json` → `mcpServers.<server>.env`) or process environment variables. Always use the default board unless the user explicitly specifies a different board.",
+        "List available card types for a board. Returns card type IDs, names, colors, and whether each is the board default.",
       inputSchema: {
         boardId: z.string().optional(),
       },
@@ -25,9 +33,7 @@ export function registerCardTypeTools(mcp) {
     wrapToolHandler("listCardTypes", async ({ boardId }) => {
       const resolvedBoardId = boardId || DEFAULT_BOARD_ID;
       if (!resolvedBoardId) {
-        throw new Error(
-          `Board ID is required. Provide "boardId" or set AGILEPLACE_BOARD_ID in ${configSourceLabel()}.`
-        );
+        throw new Error('Board ID is required. Provide "boardId".');
       }
 
       const response = await listCardTypesApi(resolvedBoardId);
@@ -35,12 +41,17 @@ export function registerCardTypeTools(mcp) {
 
       const cardTypesList = cardTypes.length > 0
         ? cardTypes
-            .map(ct => `ID: ${ct.id || "N/A"} | Name: ${ct.name || "N/A"}`)
+            .map(
+              ct =>
+                `ID: ${ct.id || "N/A"} | Name: ${ct.name || "N/A"} | Color: ${
+                  ct.colorHex || "N/A"
+                } | isDefault: ${!!ct.isDefault}`
+            )
             .join("\n")
         : "No card types found";
 
       const text = `Found ${cardTypes.length} card type(s) on board ${resolvedBoardId} (source: ${
-        boardId ? "boardId parameter" : "default AGILEPLACE_BOARD_ID"
+        boardId ? "boardId parameter" : "tool default"
       }):\n${cardTypesList}`;
 
       // Preserve original response shape (single text content item)
@@ -91,7 +102,7 @@ export function registerCardTypeTools(mcp) {
     "updateCardType",
     {
       description:
-        "Update a card type. Partial updates - only include fields to change.",
+        "Rename, recolor, or adjust flags on an existing card type in place via PATCH /io/board/:boardId/cardType/:cardTypeId — same type ID is preserved and cards already using that type stay on it (unlike delete+create or setupCardTypes wipes, which reassign cards). Partial updates: only send fields to change. Supported: name, colorHex (e.g. #B8D4E8), isCardType, isTaskType. This is the card-type analogue to updateLane: targeted branding without recreating the type.",
       inputSchema: {
         boardId: z.string(),
         cardTypeId: z.string(),
@@ -113,6 +124,51 @@ export function registerCardTypeTools(mcp) {
         return respondText(
           `Updated card type ${cardTypeId}`,
           JSON.stringify(ct, null, 2)
+        );
+      }
+    )
+  );
+
+  // Set default card type by ID or name
+  mcp.registerTool(
+    "setDefaultCardType",
+    {
+      description:
+        "Set the board's default card type to an existing type by cardTypeId or cardTypeName.",
+      inputSchema: {
+        boardId: z.string(),
+        cardTypeId: z.string().optional(),
+        cardTypeName: z.string().optional(),
+      },
+    },
+    wrapToolHandler(
+      "setDefaultCardType",
+      async ({ boardId, cardTypeId, cardTypeName }) => {
+        if (!cardTypeId && !cardTypeName) {
+          throw new Error("Provide cardTypeId or cardTypeName.");
+        }
+
+        let resolvedCardTypeId = cardTypeId ? String(cardTypeId) : null;
+        let resolvedName = cardTypeName || null;
+        if (!resolvedCardTypeId) {
+          const current = await listCardTypesApi(boardId);
+          const cardTypes = current.cardTypes || [];
+          const lookup = cardTypeName.trim().toLowerCase();
+          const match = cardTypes.find(
+            ct => (ct.name || "").trim().toLowerCase() === lookup
+          );
+          if (!match) {
+            throw new Error(
+              `Card type "${cardTypeName}" not found on board ${boardId}.`
+            );
+          }
+          resolvedCardTypeId = String(match.id);
+          resolvedName = match.name;
+        }
+
+        await updateBoardApi(boardId, { defaultCardType: resolvedCardTypeId });
+        return respondText(
+          `Set default card type on board ${boardId} to ${resolvedName || resolvedCardTypeId} (ID: ${resolvedCardTypeId})`
         );
       }
     )
@@ -205,23 +261,86 @@ export function registerCardTypeTools(mcp) {
     "batchDeleteCardTypes",
     {
       description:
-        "Delete multiple card types from a board. Automatically skips default card type and default task type (cannot be deleted). Returns per-type success/failure.",
+        "Delete multiple card types from a board. By default, skips default card type and default task type. Set force=true (with promoteDefaultToCardTypeId or promoteDefaultToCardTypeName) to reassign default first, then allow deleting the former default. Returns per-type success/failure.",
       inputSchema: {
         boardId: z.string(),
         cardTypeIds: z
           .array(z.string())
           .describe("Array of card type IDs to delete"),
+        force: z
+          .boolean()
+          .optional()
+          .describe(
+            "If true and the current default card type is in cardTypeIds, reassign default first using promoteDefaultToCardTypeId or promoteDefaultToCardTypeName."
+          ),
+        promoteDefaultToCardTypeId: z.string().optional(),
+        promoteDefaultToCardTypeName: z.string().optional(),
       },
     },
     wrapToolHandler(
       "batchDeleteCardTypes",
-      async ({ boardId, cardTypeIds }) => {
+      async ({
+        boardId,
+        cardTypeIds,
+        force = false,
+        promoteDefaultToCardTypeId,
+        promoteDefaultToCardTypeName,
+      }) => {
         const current = await listCardTypesApi(boardId);
         const cardTypes = current.cardTypes || [];
 
-        const defaultCardTypeId = cardTypes.find(ct => ct.isDefault)?.id;
+        let defaultCardTypeId = cardTypes.find(ct => ct.isDefault)?.id;
         const defaultTaskTypeId = cardTypes.find(ct => ct.isDefaultTaskType)
           ?.id;
+        const deletingDefaultCardType =
+          defaultCardTypeId &&
+          (cardTypeIds || []).some(
+            id => String(id) === String(defaultCardTypeId)
+          );
+
+        if (deletingDefaultCardType && force) {
+          if (
+            !promoteDefaultToCardTypeId &&
+            !promoteDefaultToCardTypeName
+          ) {
+            throw new Error(
+              "force=true requires promoteDefaultToCardTypeId or promoteDefaultToCardTypeName when deleting the current default card type."
+            );
+          }
+
+          let nextDefault = null;
+          if (promoteDefaultToCardTypeId) {
+            nextDefault = cardTypes.find(
+              ct => String(ct.id) === String(promoteDefaultToCardTypeId)
+            );
+          } else if (promoteDefaultToCardTypeName) {
+            const lookup = promoteDefaultToCardTypeName.trim().toLowerCase();
+            nextDefault = cardTypes.find(
+              ct => (ct.name || "").trim().toLowerCase() === lookup
+            );
+          }
+
+          if (!nextDefault) {
+            throw new Error(
+              "Requested promoted default card type was not found on this board."
+            );
+          }
+          if (String(nextDefault.id) === String(defaultCardTypeId)) {
+            throw new Error(
+              "Promoted default card type cannot be the same as the card type being deleted."
+            );
+          }
+          if (
+            (cardTypeIds || []).some(id => String(id) === String(nextDefault.id))
+          ) {
+            throw new Error(
+              "Promoted default card type is also included in cardTypeIds for deletion. Remove it from the delete list."
+            );
+          }
+
+          await updateBoardApi(boardId, { defaultCardType: String(nextDefault.id) });
+          defaultCardTypeId = String(nextDefault.id);
+        }
 
         const deleted = [];
 
@@ -230,7 +349,9 @@ export function registerCardTypeTools(mcp) {
             deleted.push({
               id,
               success: false,
-              error: "Cannot delete default card type",
+              error: force
+                ? "Cannot delete current default card type"
+                : "Cannot delete default card type (use force=true and promoteDefaultToCardTypeId or promoteDefaultToCardTypeName)",
               skipped: true,
             });
             continue;
@@ -280,7 +401,7 @@ export function registerCardTypeTools(mcp) {
     "setupCardTypes",
     {
       description:
-        "Complete card type setup for a board in one call: creates custom types, sets a default, and optionally deletes all stock types while preserving the default task type.",
+        "Complete card type setup for a board in one call: creates custom types and sets a default (additive by default). To delete pre-existing stock types, set deleteStockTypes and confirmDeleteStockTypes to true.",
       inputSchema: {
         boardId: z.string(),
         cardTypes: z.array(
@@ -294,19 +415,32 @@ export function registerCardTypeTools(mcp) {
         defaultCardTypeName: z
           .string()
           .describe(
-            "Name of the card type (from cardTypes array) to set as the board's default card type"
+            "Name of the card type to set as the board's default card type (resolved from post-operation board state; can be newly created or already existing)"
           ),
         deleteStockTypes: z
           .boolean()
           .optional()
           .describe(
-            "If true, deletes all pre-existing card types except the default task type"
+            "DESTRUCTIVE: when true, deletes all pre-existing card types on the board before creating new ones. Default: false (additive). Requires confirmDeleteStockTypes: true."
+          ),
+        confirmDeleteStockTypes: z
+          .boolean()
+          .optional()
+          .describe(
+            "Required when deleteStockTypes is true. Must be true to confirm irreversible deletion of stock card types."
           ),
       },
     },
     wrapToolHandler(
       "setupCardTypes",
-      async ({ boardId, cardTypes, defaultCardTypeName, deleteStockTypes }) => {
+      async ({
+        boardId,
+        cardTypes,
+        defaultCardTypeName,
+        deleteStockTypes,
+        confirmDeleteStockTypes,
+      }) => {
+        validateSetupCardTypesDeleteFlags(deleteStockTypes, confirmDeleteStockTypes);
         const report = {
           boardId,
           created: [],
@@ -347,8 +481,17 @@ export function registerCardTypeTools(mcp) {
           }
         }
 
-        // Step 2: Set default card type
-        const defaultId = typeMap[defaultCardTypeName];
+        // Step 2: Resolve and set default card type from current board state
+        let defaultId = null;
+        const currentAfterCreate = await listCardTypesApi(boardId);
+        const cardTypesAfterCreate = currentAfterCreate.cardTypes || [];
+        const defaultLookup = (defaultCardTypeName || "").trim().toLowerCase();
+        const defaultType = cardTypesAfterCreate.find(
+          ct => (ct.name || "").trim().toLowerCase() === defaultLookup
+        );
+        if (defaultType?.id !== undefined && defaultType?.id !== null) {
+          defaultId = String(defaultType.id);
+        }
         if (defaultId) {
           try {
             await updateBoardApi(boardId, { defaultCardType: defaultId });
@@ -365,12 +508,12 @@ export function registerCardTypeTools(mcp) {
         } else {
           report.errors.push({
             phase: "setDefault",
-            error: `Card type "${defaultCardTypeName}" not found in created types`,
+            error: `Card type "${defaultCardTypeName}" not found on board after setup`,
           });
         }
 
-        // Step 3: Delete stock types that existed before we started
-        if (deleteStockTypes !== false) {
+        // Step 3: Delete stock types that existed before we started (opt-in only)
+        if (deleteStockTypes === true) {
           const current = await listCardTypesApi(boardId);
           const currentTypes = current.cardTypes || [];
           const defaultTaskTypeId = currentTypes.find(

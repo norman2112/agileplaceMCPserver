@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CONFIG, configSourceLabel } from "../config.mjs";
+import { CONFIG } from "../config.mjs";
 import { respondText, wrapToolHandler } from "../helpers.mjs";
 import {
   getBoardThroughputReportApi,
@@ -21,7 +21,7 @@ export function registerReportingTools(mcp) {
     wrapToolHandler("getBoardThroughputReport", async ({ boardId }) => {
       const resolvedBoardId = boardId || DEFAULT_BOARD_ID;
       if (!resolvedBoardId) {
-        throw new Error(`Board ID is required. Provide "boardId" or set AGILEPLACE_BOARD_ID in ${configSourceLabel()}.`);
+        throw new Error('Board ID is required. Provide "boardId".');
       }
       const result = await getBoardThroughputReportApi(resolvedBoardId);
       return respondText(`Throughput report for board ${resolvedBoardId}`, JSON.stringify(result, null, 2));
@@ -37,7 +37,7 @@ export function registerReportingTools(mcp) {
     wrapToolHandler("getBoardWipReport", async ({ boardId }) => {
       const resolvedBoardId = boardId || DEFAULT_BOARD_ID;
       if (!resolvedBoardId) {
-        throw new Error(`Board ID is required. Provide "boardId" or set AGILEPLACE_BOARD_ID in ${configSourceLabel()}.`);
+        throw new Error('Board ID is required. Provide "boardId".');
       }
       const result = await getBoardWipReportApi(resolvedBoardId);
       return respondText(`WIP report for board ${resolvedBoardId}`, JSON.stringify(result, null, 2));
@@ -53,7 +53,7 @@ export function registerReportingTools(mcp) {
     wrapToolHandler("getLaneBottleneckReport", async ({ boardId }) => {
       const resolvedBoardId = boardId || DEFAULT_BOARD_ID;
       if (!resolvedBoardId) {
-        throw new Error(`Board ID is required. Provide "boardId" or set AGILEPLACE_BOARD_ID in ${configSourceLabel()}.`);
+        throw new Error('Board ID is required. Provide "boardId".');
       }
       const result = await getLaneBottleneckReportApi(resolvedBoardId);
       return respondText(`Lane bottleneck report for board ${resolvedBoardId}`, JSON.stringify(result, null, 2));

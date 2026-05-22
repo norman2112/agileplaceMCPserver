@@ -7,7 +7,8 @@ export function registerConnectionTools(mcp) {
   mcp.registerTool(
     "connectExistingCards",
     {
-      description: "Connect existing cards by creating parent-child relationships. Provide a parent card ID and an array of child card IDs. Optional boardId for context (not used by API).",
+      description:
+        "Connect existing cards as parent → children. Works cross-board without extra steps (children may be on different boards than the parent). Optional boardId is ignored by the API (documentation only).",
       inputSchema: {
         parentCardId: z.string(),
         childCardIds: z.array(z.string()),
@@ -33,81 +34,87 @@ export function registerConnectionTools(mcp) {
 
   // Get card relationships (dependencies and parent-child)
   mcp.registerTool(
-    "get_card_relationships",
+    "getCardRelationships",
     {
-      description: "Get all relationships and dependencies for a specific card. Returns upstream dependencies (what blocks this card), downstream dependencies (what this card blocks), parent cards with full details (id, title, cardType, laneId, tags), and child cards with full details.",
+      description:
+        "Get all relationships for a card: dependencies (upstream/downstream) and parent-child connections. Parent/child includes boardId/boardTitle when returned by the API (cross-board children are included).",
       inputSchema: {
         cardId: z.string(),
         includeFaces: z.boolean().optional(),
         boardId: z.string().optional(),
       },
     },
-    wrapToolHandler("get_card_relationships", async ({ cardId, includeFaces = true, boardId: _boardId }) => {
-      try {
-        // Fetch dependencies, parents, and children in parallel
-        const [depResponse, parentCards, childCards] = await Promise.all([
-          getCardDependencies(cardId, includeFaces),
-          getConnectionParents(cardId),
-          getConnectionChildren(cardId),
-        ]);
-        const { dependencies } = depResponse;
+    wrapToolHandler("getCardRelationships", async ({ cardId, includeFaces = true, boardId: _boardId }) => {
+      const [depResponse, parentCards, childCards] = await Promise.all([
+        getCardDependencies(cardId, includeFaces),
+        getConnectionParents(cardId),
+        getConnectionChildren(cardId),
+      ]);
+      const { dependencies } = depResponse;
 
-        // Transform dependencies to more useful format
-        const upstream = (dependencies || [])
-          .filter(d => d.direction === "incoming")
-          .map(d => ({
-            cardId: d.cardId,
-            title: d.face?.title,
-            timing: d.timing,
-            relationship: "blocks this card",
-            createdOn: d.createdOn,
-            details: d.face,
-          }));
+      const upstream = (dependencies || [])
+        .filter(d => d.direction === "incoming")
+        .map(d => ({
+          cardId: d.cardId,
+          title: d.face?.title,
+          timing: d.timing,
+          relationship: "blocks this card",
+          createdOn: d.createdOn,
+          details: d.face,
+        }));
 
-        const downstream = (dependencies || [])
-          .filter(d => d.direction === "outgoing")
-          .map(d => ({
-            cardId: d.cardId,
-            title: d.face?.title,
-            timing: d.timing,
-            relationship: "blocked by this card",
-            createdOn: d.createdOn,
-            details: d.face,
-          }));
+      const downstream = (dependencies || [])
+        .filter(d => d.direction === "outgoing")
+        .map(d => ({
+          cardId: d.cardId,
+          title: d.face?.title,
+          timing: d.timing,
+          relationship: "blocked by this card",
+          createdOn: d.createdOn,
+          details: d.face,
+        }));
 
-        // Map parents and children to full summary format (id, title, cardType, laneId, relationship)
-        const parents = parentCards.map(p => toParentChildSummary(p, "parent of this card"));
-        const children = childCards.map(c => toParentChildSummary(c, "child of this card"));
+      const parents = parentCards.map(p => toParentChildSummary(p, "parent of this card"));
+      const children = childCards.map(c => toParentChildSummary(c, "child of this card"));
+      const totalRelationships = upstream.length + downstream.length + parents.length + children.length;
 
-        const totalRelationships = upstream.length + downstream.length + parents.length + children.length;
+      return respondText(
+        `Card ${cardId}: ${totalRelationships} relationship(s)`,
+        JSON.stringify(
+          {
+            cardId,
+            dependencies: {
+              upstream,
+              downstream,
+              total: upstream.length + downstream.length,
+            },
+            parentChild: { parents, children },
+            totalRelationships,
+          },
+          null,
+          2
+        )
+      );
+    })
+  );
 
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              cardId,
-              dependencies: {
-                upstream,
-                downstream,
-                total: upstream.length + downstream.length,
-              },
-              parentChild: {
-                parents,
-                children,
-              },
-              totalRelationships,
-            }, null, 2),
-          }],
-        };
-      } catch (error) {
-        return {
-          content: [{
-            type: "text",
-            text: `Error fetching relationships: ${error.message}`,
-          }],
-          isError: true,
-        };
-      }
+  mcp.registerTool(
+    "listCardChildren",
+    {
+      description:
+        "List all child cards for a parent with board context (boardId, boardTitle when available). Cross-board children are included. Alias behavior matches getCardChildren.",
+      inputSchema: {
+        cardId: z.string(),
+        includeFaces: z.boolean().optional(),
+      },
+    },
+    wrapToolHandler("listCardChildren", async ({ cardId }) => {
+      const childCards = await getConnectionChildren(cardId);
+      const children = childCards.map(c => toParentChildSummary(c, "child"));
+      return respondText(
+        `${children.length} child card(s) for parent ${cardId}`,
+        JSON.stringify({ parentCardId: cardId, children, childCount: children.length }, null, 2)
+      );
     })
   );
 
@@ -115,14 +122,15 @@ export function registerConnectionTools(mcp) {
   mcp.registerTool(
     "getCardChildren",
     {
-      description: "Fetch just the children of a given card. Returns parent info and child cards with id, title, cardType, laneId, and optional dates. Useful for cascade workflows and hierarchy traversal.",
+      description:
+        "Fetch children of a card (id, title, cardType, laneId, boardId). Prefer listCardChildren for full parent-child summaries with board context.",
       inputSchema: {
         cardId: z.string(),
         includeFaces: z.boolean().optional(),
         boardId: z.string().optional(),
       },
     },
-    wrapToolHandler("getCardChildren", async ({ cardId, includeFaces = false, boardId: _boardId }) => {
+    wrapToolHandler("getCardChildren", async ({ cardId, includeFaces: _includeFaces = false, boardId: _boardId }) => {
       const [parentCard, childCards] = await Promise.all([
         getCardById(cardId),
         getConnectionChildren(cardId),
@@ -131,17 +139,17 @@ export function registerConnectionTools(mcp) {
       const parentTitle = parentCard?.title ?? "";
 
       const children = childCards.map(c => {
-        const cardType = c.type?.title ?? c.type?.name ?? c.cardType?.name ?? c.cardType?.title ?? "";
-        const child = {
-          id: String(c.id ?? ""),
-          title: c.title ?? "",
-          cardType: String(cardType),
+        const summary = toParentChildSummary(c, "child");
+        return {
+          id: summary.id,
+          title: summary.title,
+          cardType: summary.cardType,
+          laneId: summary.laneId,
+          boardId: summary.boardId,
+          boardTitle: summary.boardTitle,
+          plannedStartDate: summary.plannedStartDate,
+          plannedFinishDate: summary.plannedFinishDate,
         };
-        const laneId = c.laneId ?? c.lane?.id;
-        if (laneId) child.laneId = String(laneId);
-        if (c.plannedStart) child.plannedStartDate = c.plannedStart;
-        if (c.plannedFinish) child.plannedFinishDate = c.plannedFinish;
-        return child;
       });
 
       const result = {

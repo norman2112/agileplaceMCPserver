@@ -1,14 +1,8 @@
-import { fileURLToPath } from "url";
-import { dirname, join } from "path";
-import { readFileSync } from "fs";
 import { z } from "zod";
 import { registerAppResource, registerAppTool, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
-import { CONFIG, configSourceLabel } from "./config.mjs";
-import { respondText } from "./helpers.mjs";
+import { CONFIG } from "./config.mjs";
 import { listCardsWithDependencies } from "./api/agileplace.mjs";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 const { DEFAULT_BOARD_ID } = CONFIG;
 
 const DEPENDENCY_GRAPH_URI = "ui://agileplace/dependency-graph";
@@ -25,6 +19,31 @@ const MCP_APP_INLINE_SCRIPT = `
   var pending = {};
   var toolResultHandler = null;
 
+  function resolvePostMessageTarget() {
+    try {
+      if (window.location.ancestorOrigins && window.location.ancestorOrigins.length > 0) {
+        return window.location.ancestorOrigins[0];
+      }
+    } catch (e) {}
+    var fromAttr = document.documentElement.getAttribute("data-parent-origin");
+    if (fromAttr) return fromAttr;
+    try {
+      if (document.referrer) return new URL(document.referrer).origin;
+    } catch (e) {}
+    return null;
+  }
+
+  var postMessageTarget = resolvePostMessageTarget();
+
+  function safePostMessage(message) {
+    if (!postMessageTarget) {
+      console.warn("MCP App: parent origin unknown; skipping postMessage");
+      return false;
+    }
+    window.parent.postMessage(message, postMessageTarget);
+    return true;
+  }
+
   window.addEventListener("message", function(ev) {
     var msg = ev.data;
     if (!msg || msg.jsonrpc !== "2.0") return;
@@ -39,15 +58,18 @@ const MCP_APP_INLINE_SCRIPT = `
   });
 
   function sendRequest(method, params) {
-    return new Promise(function(resolve) {
+    return new Promise(function(resolve, reject) {
       var id = ++msgId;
       pending[id] = resolve;
-      window.parent.postMessage({ jsonrpc: "2.0", id: id, method: method, params: params }, "*");
+      if (!safePostMessage({ jsonrpc: "2.0", id: id, method: method, params: params })) {
+        delete pending[id];
+        reject(new Error("Cannot postMessage to parent: origin unknown"));
+      }
     });
   }
 
   function sendNotification(method, params) {
-    window.parent.postMessage({ jsonrpc: "2.0", method: method, params: params || {} }, "*");
+    safePostMessage({ jsonrpc: "2.0", method: method, params: params || {} });
   }
 
   // Expose a minimal app-like API for the graph code
@@ -78,7 +100,7 @@ const MCP_APP_INLINE_SCRIPT = `
  */
 function buildDependencyGraphHtml() {
   return `<!DOCTYPE html>
-<html><head><meta charset="UTF-8">
+<html data-parent-origin=""><head><meta charset="UTF-8">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f9fafb;color:#1a1a1a;overflow:hidden;min-height:700px;height:100vh}
@@ -484,7 +506,7 @@ export function registerUiResources(mcp) {
   // Register the dependency graph tool with UI
   registerAppTool(
     mcp,
-    "get_board_dependency_graph",
+    "getBoardDependencyGraph",
     {
       title: "Board Dependency Graph",
       description: "Get complete dependency graph for an entire board. Returns all cards with their relationships formatted for graph visualization. Includes interactive UI for exploring the dependency graph.",
@@ -506,7 +528,7 @@ export function registerUiResources(mcp) {
     async ({ boardId }) => {
       const resolvedBoardId = boardId || DEFAULT_BOARD_ID;
       if (!resolvedBoardId) {
-        throw new Error(`Board ID is required. Provide "boardId" or set AGILEPLACE_BOARD_ID in ${configSourceLabel()}.`);
+        throw new Error('Board ID is required. Provide "boardId".');
       }
 
       try {

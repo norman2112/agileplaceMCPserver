@@ -594,7 +594,7 @@
                     async () => {
                         if (typeof app.requestTool === 'function') {
                             console.log('Trying app.requestTool...');
-                            const result = await app.requestTool('get_board_dependency_graph', {});
+                            const result = await app.requestTool('getBoardDependencyGraph', {});
                             console.log('requestTool returned:', result);
                             return result;
                         }
@@ -602,7 +602,7 @@
                     async () => {
                         if (typeof app.callTool === 'function') {
                             console.log('Trying app.callTool...');
-                            const result = await app.callTool('get_board_dependency_graph', {});
+                            const result = await app.callTool('getBoardDependencyGraph', {});
                             console.log('callTool returned:', result);
                             return result;
                         }
@@ -644,13 +644,13 @@
                                 manualBtn.disabled = true;
                                 try {
                                     if (typeof app.requestTool === 'function') {
-                                        const result = await app.requestTool('get_board_dependency_graph', {});
+                                        const result = await app.requestTool('getBoardDependencyGraph', {});
                                         if (result) {
                                             toolResultReceived = true;
                                             handleToolResult(result);
                                         }
                                     } else if (typeof app.callTool === 'function') {
-                                        const result = await app.callTool('get_board_dependency_graph', {});
+                                        const result = await app.callTool('getBoardDependencyGraph', {});
                                         if (result) {
                                             toolResultReceived = true;
                                             handleToolResult(result);

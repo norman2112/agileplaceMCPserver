@@ -7,6 +7,9 @@ import { logError } from "./helpers.mjs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import express from "express";
+import { z } from "zod";
+import { withAccountContext } from "./account-context.mjs";
+import { PACKAGE_VERSION } from "./version.mjs";
 
 // Tool registrations
 import { registerBoardTools } from "./tools/boards.mjs";
@@ -41,7 +44,24 @@ process.on("uncaughtException", (err) => {
 });
 
 // Initialize MCP server
-const mcp = new McpServer({ name: "agileplace", version: "1.4.0" });
+const mcp = new McpServer({ name: "agileplace", version: PACKAGE_VERSION });
+
+const originalRegisterTool = mcp.registerTool.bind(mcp);
+mcp.registerTool = (name, config, handler) => {
+  const originalSchema = config?.inputSchema && typeof config.inputSchema === "object"
+    ? config.inputSchema
+    : {};
+  const hasAccountField = Object.prototype.hasOwnProperty.call(originalSchema, "account");
+  const inputSchema = hasAccountField
+    ? originalSchema
+    : { ...originalSchema, account: z.string().optional() };
+
+  return originalRegisterTool(
+    name,
+    { ...config, inputSchema },
+    async (input = {}, ...rest) => withAccountContext(input?.account || "default", () => handler(input, ...rest))
+  );
+};
 
 // Register all tools
 registerBoardTools(mcp);

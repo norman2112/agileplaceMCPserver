@@ -1,10 +1,13 @@
 import { z } from "zod";
 import { respondText } from "../helpers.mjs";
-import { CONFIG, configSourceLabel } from "../config.mjs";
+import { CONFIG } from "../config.mjs";
+import { jsonPatchOperationSchema, laneLayoutNodeSchema } from "../patch-schemas.mjs";
 import {
   listBoardsApi,
   archiveBoardApi,
+  unarchiveBoardApi,
   createBoardApi,
+  duplicateBoardApi,
   updateBoardApi,
   updateBoardLayoutApi,
   getBoardCustomFieldsApi,
@@ -13,6 +16,71 @@ import {
 } from "../api/agileplace.mjs";
 
 const { DEFAULT_BOARD_ID } = CONFIG;
+const boardCustomFieldChoiceConfigurationSchema = z
+  .object({
+    choices: z.array(z.string()).optional(),
+  })
+  .passthrough();
+
+/** Full field definition for createBoardCustomFields (matches PATCH value docs; no icon keys). */
+const BOARD_CUSTOM_FIELD_TYPES = ["text", "number", "date", "choice", "multi"];
+
+const boardCustomFieldCreateSchema = z
+  .object({
+    label: z.string(),
+    helpText: z.string().optional(),
+    type: z.enum(BOARD_CUSTOM_FIELD_TYPES),
+    index: z.number().int().optional(),
+    choiceConfiguration: boardCustomFieldChoiceConfigurationSchema.optional(),
+  })
+  .strict();
+
+/** Partial update for patchBoardCustomField (replace body). */
+const boardCustomFieldPatchSchema = z
+  .object({
+    label: z.string().optional(),
+    helpText: z.string().optional(),
+    type: z.string().min(1).optional(),
+    index: z.number().int().optional(),
+    choiceConfiguration: boardCustomFieldChoiceConfigurationSchema.optional(),
+  })
+  .strict()
+  .refine(v => Object.keys(v).length > 0, {
+    message: "changes must include at least one property",
+  });
+
+const BOARD_CUSTOM_FIELD_VALUE_KEYS = new Set([
+  "label",
+  "helpText",
+  "type",
+  "index",
+  "choiceConfiguration",
+]);
+
+/**
+ * Reject unknown keys in add/replace `value` objects for PATCH /board/:id/customfield.
+ * GET responses may include iconName/iconColor for display; those are not in the PATCH contract.
+ */
+function assertBoardCustomFieldPatchValueShape(value, opIndex) {
+  if (value === undefined || value === null) return;
+  if (typeof value !== "object" || Array.isArray(value)) return;
+  const unknown = Object.keys(value).filter(k => !BOARD_CUSTOM_FIELD_VALUE_KEYS.has(k));
+  if (unknown.length > 0) {
+    throw new Error(
+      `updates[${opIndex}].value: unknown key(s): ${unknown.join(", ")}. ` +
+        `Accepted keys: ${[...BOARD_CUSTOM_FIELD_VALUE_KEYS].join(", ")}. ` +
+        "iconName/iconColor on fields are not settable via this endpoint (see POST /io/board/:boardId/customIcon for custom icons)."
+    );
+  }
+}
+
+function validateBoardCustomFieldPatchArray(updates) {
+  updates.forEach((op, i) => {
+    if (op.op === "add" || op.op === "replace") {
+      assertBoardCustomFieldPatchValueShape(op.value, i);
+    }
+  });
+}
 
 export function registerBoardTools(mcp) {
   // Create a new board
@@ -39,6 +107,60 @@ export function registerBoardTools(mcp) {
       };
       return respondText(
         `Created board "${effectiveTitle}" (ID: ${summary.id})`,
+        JSON.stringify(summary, null, 2)
+      );
+    }
+  );
+
+  // Duplicate an existing board
+  mcp.registerTool(
+    "duplicateBoard",
+    {
+      description:
+        "Duplicate an existing board, including lanes, card types, cards, comments, custom fields, dependencies, and (optionally) users. For an empty board, use createBoard instead.",
+      inputSchema: {
+        fromBoardId: z.string(),
+        title: z.string(),
+        description: z.string().optional(),
+        includeCards: z.boolean().optional(),
+        includeExistingUsers: z.boolean().optional(),
+        baseWipOnCardSize: z.boolean().optional(),
+        excludeCompletedAndArchiveViolations: z.boolean().optional(),
+        isShared: z.boolean().optional(),
+        sharedBoardRole: z
+          .enum(["none", "boardReader", "boardUser", "boardManager", "boardAdministrator"])
+          .optional(),
+      },
+    },
+    async ({
+      fromBoardId,
+      title,
+      description,
+      includeCards = true,
+      includeExistingUsers = true,
+      baseWipOnCardSize,
+      excludeCompletedAndArchiveViolations,
+      isShared,
+      sharedBoardRole,
+    }) => {
+      const board = await duplicateBoardApi({
+        fromBoardId,
+        title,
+        description,
+        includeCards,
+        includeExistingUsers,
+        baseWipOnCardSize,
+        excludeCompletedAndArchiveViolations,
+        isShared,
+        sharedBoardRole,
+      });
+      const effectiveTitle = board?.title ?? title;
+      const summary = {
+        id: board.id,
+        title: board.title ?? effectiveTitle,
+      };
+      return respondText(
+        `Duplicated board "${fromBoardId}" into "${effectiveTitle}" (ID: ${summary.id})`,
         JSON.stringify(summary, null, 2)
       );
     }
@@ -82,6 +204,21 @@ export function registerBoardTools(mcp) {
     async ({ boardId }) => {
       await archiveBoardApi(boardId);
       return respondText(`Archived board ${boardId}`);
+    }
+  );
+
+  mcp.registerTool(
+    "unarchiveBoard",
+    {
+      description:
+        "Restore an archived board (POST /io/board/:boardId/unarchive). Requires Account Administrator role.",
+      inputSchema: {
+        boardId: z.string(),
+      },
+    },
+    async ({ boardId }) => {
+      await unarchiveBoardApi(boardId);
+      return respondText(`Unarchived board ${boardId}`);
     }
   );
 
@@ -159,10 +296,19 @@ export function registerBoardTools(mcp) {
   mcp.registerTool(
     "updateBoardLayout",
     {
-      description: "Update the lane layout for a board using the native layout endpoint. Pass the full layout object (usually taken from GET /io/board/:boardId).",
+      description:
+        "Update the lane layout for a board (PUT /io/board/:boardId/layout). Pass either { lanes, layoutChecksum? } as returned by getBoardLayout, or a bare lanes array (checksum optional on object form).",
       inputSchema: {
         boardId: z.string(),
-        layout: z.any(),
+        layout: z.union([
+          z.object({
+            lanes: z.array(laneLayoutNodeSchema),
+            layoutChecksum: z.string().optional(),
+            laneLayoutChecksum: z.string().optional(),
+            checksum: z.string().optional(),
+          }),
+          z.array(laneLayoutNodeSchema),
+        ]),
       },
     },
     async ({ boardId, layout }) => {
@@ -186,7 +332,7 @@ export function registerBoardTools(mcp) {
     async ({ boardId }) => {
       const resolvedBoardId = boardId || DEFAULT_BOARD_ID;
       if (!resolvedBoardId) {
-        throw new Error(`Board ID is required. Provide "boardId" or set AGILEPLACE_BOARD_ID in ${configSourceLabel()}.`);
+        throw new Error('Board ID is required. Provide "boardId".');
       }
       const fields = await getBoardCustomFieldsApi(resolvedBoardId);
       return respondText(
@@ -199,21 +345,145 @@ export function registerBoardTools(mcp) {
   mcp.registerTool(
     "updateBoardCustomFields",
     {
-      description: "Update custom fields configuration for a board. Pass a partial customfield object as expected by the AgilePlace API.",
+      description: [
+        "Update board custom fields via PATCH /io/board/:boardId/customfield.",
+        "updates must be a non-empty JSON Patch array (RFC 6902).",
+        "Each operation shape: { op, path, value? }.",
+        "Common operations:",
+        '- Add field: {"op":"add","path":"/","value":{"label":"Submitter","type":"text"}}',
+        '- Replace existing field: {"op":"replace","path":"/<fieldId>","value":{"label":"New Label","type":"text"}}',
+        '- Remove field: {"op":"remove","path":"/<fieldId>"}',
+        'Choice example: {"op":"add","path":"/","value":{"label":"Sentiment","type":"choice","choiceConfiguration":{"choices":["Positive","Neutral","Negative"]}}}',
+        "If your payload is not an array, the tool returns a shape-specific error.",
+        "Each add/replace value object may only include: label, helpText, type, index, choiceConfiguration (per API). Unknown keys (e.g. iconName) are rejected before calling AgilePlace.",
+      ].join("\n"),
       inputSchema: {
         boardId: z.string().optional(),
-        updates: z.any(),
+        updates: z.array(jsonPatchOperationSchema).min(1),
       },
     },
     async ({ boardId, updates }) => {
       const resolvedBoardId = boardId || DEFAULT_BOARD_ID;
       if (!resolvedBoardId) {
-        throw new Error(`Board ID is required. Provide "boardId" or set AGILEPLACE_BOARD_ID in ${configSourceLabel()}.`);
+        throw new Error('Board ID is required. Provide "boardId".');
       }
+      validateBoardCustomFieldPatchArray(updates);
       const result = await updateBoardCustomFieldsApi(resolvedBoardId, updates);
       return respondText(
         `Updated custom fields for board ${resolvedBoardId}`,
         JSON.stringify(result || { boardId: resolvedBoardId }, null, 2)
+      );
+    }
+  );
+
+  mcp.registerTool(
+    "createBoardCustomField",
+    {
+      description:
+        "Create one board custom field (JSON Patch add to /io/board/:boardId/customfield). Types: text, number, date, choice, multi.",
+      inputSchema: {
+        boardId: z.string().optional(),
+        field: boardCustomFieldCreateSchema,
+      },
+    },
+    async ({ boardId, field }) => {
+      const resolvedBoardId = boardId || DEFAULT_BOARD_ID;
+      if (!resolvedBoardId) {
+        throw new Error('Board ID is required. Provide "boardId".');
+      }
+      const updates = [{ op: "add", path: "/", value: field }];
+      const result = await updateBoardCustomFieldsApi(resolvedBoardId, updates);
+      return respondText(
+        `Created custom field "${field.label}" on board ${resolvedBoardId}`,
+        JSON.stringify(result || { boardId: resolvedBoardId, field }, null, 2)
+      );
+    }
+  );
+
+  mcp.registerTool(
+    "createBoardCustomFields",
+    {
+      description:
+        "Create multiple board custom fields without hand-writing JSON Patch. Same as repeated createBoardCustomField.",
+      inputSchema: {
+        boardId: z.string().optional(),
+        fields: z.array(boardCustomFieldCreateSchema).min(1),
+      },
+    },
+    async ({ boardId, fields }) => {
+      const resolvedBoardId = boardId || DEFAULT_BOARD_ID;
+      if (!resolvedBoardId) {
+        throw new Error('Board ID is required. Provide "boardId".');
+      }
+      const updates = fields.map(field => ({
+        op: "add",
+        path: "/",
+        value: field,
+      }));
+      const result = await updateBoardCustomFieldsApi(resolvedBoardId, updates);
+      return respondText(
+        `Created ${fields.length} custom field(s) for board ${resolvedBoardId}`,
+        JSON.stringify(result || { boardId: resolvedBoardId, created: fields.length }, null, 2)
+      );
+    }
+  );
+
+  mcp.registerTool(
+    "patchBoardCustomField",
+    {
+      description:
+        "Update an existing board custom field by fieldId. Sends a replace operation to /io/board/:boardId/customfield using path /<fieldId>.",
+      inputSchema: {
+        boardId: z.string().optional(),
+        fieldId: z.string(),
+        changes: boardCustomFieldPatchSchema,
+      },
+    },
+    async ({ boardId, fieldId, changes }) => {
+      const resolvedBoardId = boardId || DEFAULT_BOARD_ID;
+      if (!resolvedBoardId) {
+        throw new Error('Board ID is required. Provide "boardId".');
+      }
+      const updates = [
+        {
+          op: "replace",
+          path: `/${fieldId}`,
+          value: changes,
+        },
+      ];
+      const result = await updateBoardCustomFieldsApi(resolvedBoardId, updates);
+      return respondText(
+        `Updated custom field ${fieldId} for board ${resolvedBoardId}`,
+        JSON.stringify(result || { boardId: resolvedBoardId, fieldId }, null, 2)
+      );
+    }
+  );
+
+  mcp.registerTool(
+    "deleteBoardCustomField",
+    {
+      description:
+        "Delete a board custom field by fieldId. Sends a remove operation to /io/board/:boardId/customfield using path /<fieldId>.",
+      inputSchema: {
+        boardId: z.string().optional(),
+        fieldId: z.string(),
+      },
+    },
+    async ({ boardId, fieldId }) => {
+      const resolvedBoardId = boardId || DEFAULT_BOARD_ID;
+      if (!resolvedBoardId) {
+        throw new Error('Board ID is required. Provide "boardId".');
+      }
+      const updates = [
+        {
+          op: "remove",
+          path: `/${fieldId}`,
+        },
+      ];
+      const result = await updateBoardCustomFieldsApi(resolvedBoardId, updates);
+      return respondText(
+        `Deleted custom field ${fieldId} from board ${resolvedBoardId}`,
+        JSON.stringify(result || { boardId: resolvedBoardId, fieldId }, null, 2)
       );
     }
   );

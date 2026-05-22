@@ -1,5 +1,5 @@
 import { fileURLToPath } from "url";
-import { dirname, join } from "path";
+import { join } from "path";
 import { existsSync, readFileSync } from "fs";
 import os from "os";
 
@@ -46,12 +46,12 @@ function pickMcpServerKey(mcpServers) {
   // If there is exactly one configured server, use it.
   if (keys.length === 1) return keys[0];
 
-  // Try to match by the args containing this server's path.
-  const __filename = fileURLToPath(import.meta.url);
+  // Try to match by the args containing this server's entry path (src/server.mjs).
+  const serverEntry = fileURLToPath(new URL("./server.mjs", import.meta.url));
   for (const key of keys) {
     const args = mcpServers?.[key]?.args;
     if (!Array.isArray(args)) continue;
-    if (args.some(a => typeof a === "string" && (a === __filename || a.endsWith("/server.mjs") || a.endsWith("\\server.mjs")))) {
+    if (args.some(a => typeof a === "string" && (a === serverEntry || a.endsWith("/src/server.mjs") || a.endsWith("\\src\\server.mjs") || a.endsWith("/server.mjs") || a.endsWith("\\server.mjs")))) {
       return key;
     }
   }
@@ -118,24 +118,9 @@ export function missingVarMessage(varName) {
 }
 
 function buildConfig() {
-  const API_BASE = process.env.AGILEPLACE_URL;
-  const API_TOKEN = process.env.AGILEPLACE_TOKEN;
-  const DEFAULT_BOARD_ID = process.env.AGILEPLACE_BOARD_ID;
-
-  if (!API_BASE) {
-    console.error(missingVarMessage("AGILEPLACE_URL"));
-    process.exit(1);
-  }
-
-  if (!API_TOKEN) {
-    console.error(missingVarMessage("AGILEPLACE_TOKEN"));
-    process.exit(1);
-  }
-
-  if (!DEFAULT_BOARD_ID) {
-    console.error(missingVarMessage("AGILEPLACE_BOARD_ID"));
-    process.exit(1);
-  }
+  const API_BASE = process.env.AGILEPLACE_DEFAULT_URL || process.env.AGILEPLACE_URL || null;
+  const API_TOKEN = process.env.AGILEPLACE_DEFAULT_TOKEN || process.env.AGILEPLACE_TOKEN || null;
+  const DEFAULT_BOARD_ID = null;
 
   // OKR configuration
   const OKR_BASE = process.env.OKR_BASE_URL;
@@ -144,7 +129,14 @@ function buildConfig() {
   const OKR_TOKEN = process.env.OKR_TOKEN || null;
   const OKR_DEFAULT_LIMIT = Math.min(Number(process.env.OKR_DEFAULT_LIMIT || 200), 500);
 
-  const MAX_CARDS = Number(process.env.MAX_CARDS || 15);
+  // Batch card creation cap (batchCreateCards, batchCreateConnectedCards children, hierarchy).
+  // Prefer AGILEPLACE_MAX_CARDS_PER_BATCH; MAX_CARDS remains supported for backward compatibility.
+  const maxCardsRaw = Number(
+    process.env.AGILEPLACE_MAX_CARDS_PER_BATCH || process.env.MAX_CARDS || 15
+  );
+  const MAX_CARDS = Number.isFinite(maxCardsRaw) && maxCardsRaw >= 1
+    ? Math.min(200, Math.round(maxCardsRaw))
+    : 15;
   const MAX_DESC = Number(process.env.MAX_DESC || 800);
   const FETCH_TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT_MS || 25000);
   const OKR_FETCH_TIMEOUT_MS = Number(process.env.OKR_FETCH_TIMEOUT_MS || FETCH_TIMEOUT_MS);

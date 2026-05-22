@@ -35,18 +35,29 @@ export function registerAttachmentTools(mcp) {
     "createAttachment",
     {
       description:
-        "Upload an attachment to a card. Uses multipart/form-data. fileContent is the text/binary content of the file; fileName is the display name. Optional description.",
+        "Upload an attachment to a card. Uses multipart/form-data (FormData/Blob). fileContent is UTF-8 text by default; use contentEncoding base64 for binary (e.g. PNG). fileName must not contain quotes or newlines.",
       inputSchema: {
         cardId: z.string(),
         fileName: z.string(),
         fileContent: z.string(),
         description: z.string().optional(),
+        contentType: z
+          .string()
+          .optional()
+          .describe("MIME type for the file blob (default application/octet-stream)"),
+        contentEncoding: z
+          .enum(["utf8", "base64"])
+          .optional()
+          .describe("How to interpret fileContent (default utf8; use base64 for binary files)"),
       },
     },
     wrapToolHandler(
       "createAttachment",
-      async ({ cardId, fileName, fileContent, description }) => {
-        const result = await createAttachmentApi(cardId, fileName, fileContent, description);
+      async ({ cardId, fileName, fileContent, description, contentType, contentEncoding }) => {
+        const result = await createAttachmentApi(cardId, fileName, fileContent, description, {
+          contentType,
+          contentEncoding: contentEncoding || "utf8",
+        });
         return respondText(
           `Created attachment on card ${cardId}: ${result?.name ?? fileName}`,
           JSON.stringify(

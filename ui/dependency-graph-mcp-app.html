@@ -990,7 +990,7 @@
             try {
                 if (app.log) app.log("info", "Fetching card relationships", { cardId: d.id });
                 const response = await app.callServerTool({
-                    name: "get_card_relationships",
+                    name: "getCardRelationships",
                     arguments: { cardId: d.id }
                 });
                 if (app.log) app.log("info", "Card relationships received", { cardId: d.id });
