@@ -6,7 +6,7 @@
   "main": "src/server.mjs",
   "scripts": {
     "start": "node src/server.mjs",
-    "lint": "eslint src/ scripts/",
+    "lint": "eslint src/",
     "test": "vitest run",
     "test:watch": "vitest"
   },

@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 
 # Environment variables and secrets
 config.env
@@ -25,8 +24,5 @@ Thumbs.db
 *.swo
 *~
 
-# Test files
-test-*.mjs
-*.test.js
-*.test.mjs
-
+# Generated / local artifacts
+dependency-graph-output.html

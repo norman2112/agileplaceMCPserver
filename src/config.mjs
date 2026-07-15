@@ -112,11 +112,6 @@ export function configSourceLabel() {
   return "Claude Desktop config (`claude_desktop_config.json` → `mcpServers.<server>.env`) or process environment variables";
 }
 
-export function missingVarMessage(varName) {
-  const cfgPath = claudeConfigLoadResult?.configPath || "claude_desktop_config.json";
-  return `❌ Missing ${varName}. Set it in Claude Desktop config (${cfgPath} → mcpServers.<server>.env.${varName}) or as a process environment variable.`;
-}
-
 function buildConfig() {
   const API_BASE = process.env.AGILEPLACE_DEFAULT_URL || process.env.AGILEPLACE_URL || null;
   const API_TOKEN = process.env.AGILEPLACE_DEFAULT_TOKEN || process.env.AGILEPLACE_TOKEN || null;
@@ -143,12 +138,6 @@ function buildConfig() {
   const STORY_LIMIT = Math.min(5, MAX_CARDS);
   const PORT = Number(process.env.PORT || 3333);
 
-  const HEADERS = {
-    Authorization: `Bearer ${API_TOKEN}`,
-    "Content-Type": "application/json",
-    Accept: "application/json",
-  };
-
   return {
     API_BASE,
     API_TOKEN,
@@ -164,13 +153,8 @@ function buildConfig() {
     OKR_FETCH_TIMEOUT_MS,
     STORY_LIMIT,
     PORT,
-    HEADERS,
   };
 }
 
 export const CONFIG = buildConfig();
-
-export function loadConfig() {
-  return CONFIG;
-}
 

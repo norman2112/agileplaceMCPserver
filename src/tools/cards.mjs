@@ -862,7 +862,8 @@ export function registerCardTools(mcp) {
     "listCards",
     {
       description: [
-        "List cards on a board using GET /io/board/:boardId/card with limit and offset (server-side pagination).",
+        "List cards on a board using POST /io/card/list with limit and offset (server-side pagination).",
+        "Includes cards in collapsed lane subtrees (the board card-face GET endpoint omits those).",
         `Defaults: limit ${DEFAULT_LIST_CARDS_LIMIT}, offset 0. Max limit ${MAX_LIST_CARDS_LIMIT}.`,
         "Response JSON includes total, limit, offset, returned, hasMore, and cards. Use hasMore and offset+limit for the next page.",
         "Descriptions are often empty in list responses (API omits long text). Use getCard for full description, or set includeDescriptions=true to re-fetch each card on the page (slower).",
@@ -911,7 +912,7 @@ export function registerCardTools(mcp) {
           plannedStartDate: c.plannedStart,
           plannedFinishDate: c.plannedFinish,
           isHeader: c.isHeader || false,
-          laneId: c.laneId,
+          laneId: c.laneId ?? c.lane?.id,
           cardType: c.cardType?.name ?? c.type?.title ?? c.type?.name,
           priority: c.priority,
           size: c.size,

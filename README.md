@@ -35,7 +35,7 @@ Add to your Claude Desktop config:
 
 Restart Claude Desktop after saving.
 
-`default` is the canonical account alias for `AGILEPLACE_DEFAULT_URL`/`AGILEPLACE_DEFAULT_TOKEN`. Alias `default` maps to the scdemo520 tenant. Use `default` in all tool calls.
+`default` is the canonical account alias for `AGILEPLACE_DEFAULT_URL` / `AGILEPLACE_DEFAULT_TOKEN`. Use `default` in tool calls unless you configure additional account aliases.
 
 ## Tools
 
@@ -254,7 +254,7 @@ Use **`updateLane`** to rename or tweak one lane in place (PATCH lane properties
 | `listAccounts` | List configured account aliases |
 | `listToolCatalog` | Tools grouped by category (batch vs bulk) |
 
-See [docs/NCCI_WORKFLOWS.md](docs/NCCI_WORKFLOWS.md) for demo/PI/hierarchy patterns from the NCCI retrospective.
+See [docs/WORKFLOWS.md](docs/WORKFLOWS.md) for common demo/PI/hierarchy workflow patterns.
 
 ## Board Custom Fields Patch Format
 

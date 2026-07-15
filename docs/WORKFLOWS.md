@@ -1,6 +1,6 @@
-# NCCI session workflows (canonical patterns)
+# Workflow patterns
 
-Patterns from the NCCI demo retrospective. Use with AgilePlace MCP tools in `src/tools/`.
+Canonical patterns for common AgilePlace MCP tool flows. Use with tools in `src/tools/`.
 
 ## Demo data seed (rename → archive → create)
 
