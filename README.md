@@ -214,8 +214,23 @@ Use **`updateLane`** to rename or tweak one lane in place (PATCH lane properties
 | Tool | Description |
 |------|-------------|
 | `getCurrentUser` | Get current user |
-| `listUsers` | List workspace users |
-| `getUser` | Get user by ID |
+| `listUsers` | List workspace users (admin) |
+| `getUser` | Get user by ID (admin) |
+| `createUser` | Create a user (admin) |
+| `updateUser` | Update a user profile/permissions (admin; partial) |
+| `deleteUser` | Permanently delete a user (admin) |
+| `changeUserPassword` | Change a user's password (admin) |
+| `updateCurrentUser` | Update requesting user's own profile (partial) |
+| `getCurrentUserCards` | Cards assigned to or subscribed by current user |
+| `getCurrentUserRecentBoards` | Favorite and recently accessed boards (max 10) |
+| `getUsersInfo` | Batch basic info for up to 100 user IDs |
+| `listBoardUsers` | List users and roles on a board |
+| `updateBoardUserRoles` | Create/update board roles for multiple users |
+| `addTeamUsers` | Add users to a team (max 100; not built-in teams) |
+| `listTeamUsers` | List users assigned directly to a team |
+| `removeTeamUsers` | Remove users from a team (max 10; not built-in teams) |
+| `listInvitations` | List open user invitations (admin) |
+| `revokeInvitation` | Revoke or un-revoke an invitation (admin) |
 
 ### OKRs
 

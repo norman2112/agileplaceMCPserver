@@ -15,4 +15,6 @@ export const TOOL_CATALOG_METADATA = {
   createCardDependency: { category: "dependencies" },
   getCardRelationships: { category: "connections" },
   listToolCatalog: { category: "utility" },
+  listInvitations: { category: "users" },
+  revokeInvitation: { category: "users" },
 };

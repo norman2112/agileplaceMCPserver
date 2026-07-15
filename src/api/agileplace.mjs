@@ -459,17 +459,18 @@ export async function deleteCardConnectionsApi(cardIds, connections) {
   return resp.json().catch(() => ({}));
 }
 
-// Utility: list cards on a board (GET /io/board/:boardId/card). Supports limit/offset per API docs.
+// Utility: list cards on a board (POST /io/card/list). Supports limit/offset per API docs.
+// Uses card/list instead of GET /io/board/:boardId/card because the card-face endpoint
+// omits cards in collapsed lane subtrees (lane.isCollapsed or a collapsed ancestor).
 export async function listCards(boardId, { limit, offset } = {}) {
   const ioPath = getIoPath();
-  const params = new URLSearchParams();
-  if (limit !== undefined && limit !== null) params.set("limit", String(limit));
-  if (offset !== undefined && offset !== null) params.set("offset", String(offset));
-  const qs = params.toString();
-  const url = `${API_BASE}${ioPath}/board/${boardId}/card${qs ? `?${qs}` : ""}`;
-  const resp = await fetchWithTimeout(url, {
-    method: "GET",
+  const body = { board: String(boardId) };
+  if (limit !== undefined && limit !== null) body.limit = limit;
+  if (offset !== undefined && offset !== null) body.offset = offset;
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/card/list`, {
+    method: "POST",
     headers: HEADERS,
+    body: JSON.stringify(body),
   });
 
   if (!resp.ok) {
@@ -1574,6 +1575,274 @@ export async function getUserByIdApi(userId) {
   const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/user/${userId}`, { method: "GET", headers: HEADERS });
   if (!resp.ok) { const text = await resp.text(); throw fetchResponseError(resp, "Get user", text); }
   return resp.json();
+}
+
+export async function createUserApi(payload) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/user`, {
+    method: "POST",
+    headers: HEADERS,
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "Create user", text);
+  }
+  return resp.json();
+}
+
+export async function updateUserApi(userId, body) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/user/${userId}`, {
+    method: "PATCH",
+    headers: HEADERS,
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "Update user", text);
+  }
+  return resp.json();
+}
+
+export async function deleteUserApi(userId) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/user/${userId}`, {
+    method: "DELETE",
+    headers: HEADERS,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "Delete user", text);
+  }
+}
+
+export async function changeUserPasswordApi(userId, password) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/user/${userId}/password`, {
+    method: "PATCH",
+    headers: HEADERS,
+    body: JSON.stringify({ password }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "Change user password", text);
+  }
+  return resp.json();
+}
+
+export async function updateCurrentUserApi(body) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/user/me`, {
+    method: "PATCH",
+    headers: HEADERS,
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "Update current user", text);
+  }
+  return resp.json();
+}
+
+export async function getCurrentUserCardsApi({
+  offset,
+  limit,
+  cardStatus,
+  type,
+  sort,
+  showBlockedFirst,
+  filter,
+} = {}) {
+  const ioPath = getIoPath();
+  const params = new URLSearchParams();
+  if (offset !== undefined) params.set("offset", String(offset));
+  if (limit !== undefined) params.set("limit", String(limit));
+  if (cardStatus) params.set("cardStatus", Array.isArray(cardStatus) ? cardStatus.join(",") : cardStatus);
+  if (type) params.set("type", type);
+  if (sort) params.set("sort", sort);
+  if (showBlockedFirst !== undefined) params.set("showBlockedFirst", String(showBlockedFirst));
+  if (filter) params.set("filter", Array.isArray(filter) ? filter.join(",") : filter);
+  const qs = params.toString();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/user/me/card${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    headers: HEADERS,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "Get current user cards", text);
+  }
+  return resp.json();
+}
+
+export async function getCurrentUserRecentBoardsApi() {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/user/me/board/recent`, {
+    method: "GET",
+    headers: HEADERS,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "Get current user recent boards", text);
+  }
+  return resp.json();
+}
+
+export async function getUsersInfoApi(userIds) {
+  if (!Array.isArray(userIds) || userIds.length === 0) {
+    throw new Error("userIds must be a non-empty array (max 100).");
+  }
+  if (userIds.length > 100) {
+    throw new Error("userIds cannot exceed 100 IDs per request.");
+  }
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/user/info`, {
+    method: "POST",
+    headers: HEADERS,
+    body: JSON.stringify({ userIds }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "Get users info", text);
+  }
+  return resp.json();
+}
+
+export async function listBoardUsersApi(boardId, {
+  offset,
+  limit,
+  search,
+  sortBy,
+  sortDir,
+  roleFilterList,
+  licenseFilterList,
+} = {}) {
+  const ioPath = getIoPath();
+  const params = new URLSearchParams();
+  if (offset !== undefined) params.set("offset", String(offset));
+  if (limit !== undefined) params.set("limit", String(limit));
+  if (search) params.set("search", search);
+  if (sortBy) params.set("sortBy", sortBy);
+  if (sortDir) params.set("sortDir", sortDir);
+  if (Array.isArray(roleFilterList)) {
+    for (const v of roleFilterList) params.append("roleFilterList[]", String(v));
+  }
+  if (Array.isArray(licenseFilterList)) {
+    for (const v of licenseFilterList) params.append("licenseFilterList[]", String(v));
+  }
+  const qs = params.toString();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/board/${boardId}/user${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    headers: HEADERS,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "List board users", text);
+  }
+  return resp.json();
+}
+
+export async function updateBoardUserRolesApi(boardId, operations) {
+  if (!Array.isArray(operations) || operations.length === 0) {
+    throw new Error("operations must be a non-empty array of role create/update ops.");
+  }
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/board/${boardId}/roles`, {
+    method: "PATCH",
+    headers: HEADERS,
+    body: JSON.stringify(operations),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "Update board user roles", text);
+  }
+  return resp.json();
+}
+
+export async function addTeamUsersApi(teamId, userIds) {
+  if (!Array.isArray(userIds) || userIds.length === 0) {
+    throw new Error("userIds must be a non-empty array (max 100).");
+  }
+  if (userIds.length > 100) {
+    throw new Error("userIds cannot exceed 100 IDs per request.");
+  }
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/team/${teamId}/user`, {
+    method: "POST",
+    headers: HEADERS,
+    body: JSON.stringify({ userIds }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "Add team users", text);
+  }
+}
+
+export async function listTeamUsersApi(teamId, { offset, limit } = {}) {
+  const ioPath = getIoPath();
+  const params = new URLSearchParams();
+  if (offset !== undefined) params.set("offset", String(offset));
+  if (limit !== undefined) params.set("limit", String(limit));
+  const qs = params.toString();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/team/${teamId}/user${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    headers: HEADERS,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "List team users", text);
+  }
+  return resp.json();
+}
+
+export async function removeTeamUsersApi(teamId, userIds) {
+  if (!Array.isArray(userIds) || userIds.length === 0) {
+    throw new Error("userIds must be a non-empty array (max 10).");
+  }
+  if (userIds.length > 10) {
+    throw new Error("userIds cannot exceed 10 IDs per request.");
+  }
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/team/${teamId}/user`, {
+    method: "DELETE",
+    headers: HEADERS,
+    body: JSON.stringify({ userIds }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "Remove team users", text);
+  }
+}
+
+export async function listInvitationsApi({ offset, limit, status } = {}) {
+  const ioPath = getIoPath();
+  const params = new URLSearchParams();
+  if (offset !== undefined) params.set("offset", String(offset));
+  if (limit !== undefined) params.set("limit", String(limit));
+  if (status) params.set("status", status);
+  const qs = params.toString();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/invitation${qs ? `?${qs}` : ""}`, {
+    method: "GET",
+    headers: HEADERS,
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "List invitations", text);
+  }
+  return resp.json();
+}
+
+export async function revokeInvitationApi(invitationId, isRevoked) {
+  const ioPath = getIoPath();
+  const resp = await fetchWithTimeout(`${API_BASE}${ioPath}/invitation/${invitationId}`, {
+    method: "PATCH",
+    headers: HEADERS,
+    body: JSON.stringify({ isRevoked }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw fetchResponseError(resp, "Revoke invitation", text);
+  }
 }
 
 // Reporting APIs
