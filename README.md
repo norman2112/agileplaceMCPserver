@@ -1,6 +1,38 @@
 # AgilePlace MCP Server
 
-A [Model Context Protocol](https://modelcontextprotocol.io/) server for [Planview AgilePlace](https://www.planview.com/products/agileplace/) and Planview OKRs. Provides 80+ tools for managing boards, cards, attachments, automations, scoring (WSJF), hierarchies, dependencies, planning increments, and OKR objectives directly from Claude Desktop or any MCP-compatible client.
+An MCP server that connects [Planview AgilePlace](https://www.planview.com/products/agileplace/) (enterprise kanban/agile delivery platform) and Planview OKRs to Claude Desktop or any MCP-compatible AI client. 80+ tools covering boards, cards, automations, scoring (WSJF), planning increments, hierarchies, dependencies, and OKR objectives.
+
+## Why This Exists
+
+Enterprise tools have rich APIs but no AI integration layer. I built this to let Claude operate directly against AgilePlace — creating boards, moving cards, running reports, managing PI planning — through natural language instead of clicking through a UI or writing one-off scripts.
+
+This started as a personal productivity tool and became the foundation for an AI-augmented presales workflow: using Claude to set up demo environments, populate boards with realistic data, and run live walkthroughs driven by conversation rather than scripted click paths.
+
+## What It Does
+
+- **Full CRUD** across boards, cards, lanes, card types, tags, comments, attachments, and users
+- **Batch operations** with dry-run support, WIP limit enforcement, and atomic mode
+- **Planning & hierarchy** — bootstrap PI increments, create Epic → Feature → Story structures in one call
+- **Scoring** — WSJF scoring sessions with staged scores and board-level apply
+- **OKRs** — OAuth2 integration with Planview OKRs (separate API, separate auth)
+- **Reporting** — throughput, WIP, bottleneck, and cycle/lead time analytics
+- **Multi-account** — configure multiple AgilePlace instances via account aliases
+
+## Tech Stack
+
+- **Runtime:** Node.js 18+
+- **Protocol:** Model Context Protocol (MCP) over stdio
+- **APIs:** AgilePlace REST API, Planview OKRs OAuth2 API
+- **Client:** Claude Desktop, Cursor, or any MCP-compatible client
+
+## Architecture
+Claude Desktop / MCP Client
+↓ stdio
+MCP Server (Node.js)
+├── AgilePlace REST API (token auth)
+└── Planview OKRs API (OAuth2 client credentials)
+
+The server reads credentials from Claude Desktop's config file and handles auth, token refresh, rate limiting, and batch orchestration internally.
 
 ## Quick Start
 
