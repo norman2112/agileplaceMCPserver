@@ -293,7 +293,7 @@ export function registerUserTools(mcp) {
         "Create or update board roles for multiple users in one call (PATCH /io/board/:boardId/roles). Requires board administrator access. roleTypeId: 1=boardReader, 2=boardUser, 3=boardManager, 4=boardAdministrator. For update ops, include id (boardRoleId).",
       inputSchema: {
         boardId: z.string(),
-        operations: z.array(boardRoleOpSchema).min(1),
+        operations: z.array(boardRoleOpSchema).min(1).max(100),
       },
     },
     wrapToolHandler("updateBoardUserRoles", async ({ boardId, operations }) => {

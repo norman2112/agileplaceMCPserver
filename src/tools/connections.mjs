@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { respondText, wrapToolHandler } from "../helpers.mjs";
 import { connectExistingCards, getCardDependencies, getConnectionParents, getConnectionChildren, getCardById, toParentChildSummary, deleteCardConnectionsApi } from "../api/agileplace.mjs";
+import { MAX_BULK_IDS } from "../limits.mjs";
 
 export function registerConnectionTools(mcp) {
   // Connect existing cards
@@ -11,7 +12,7 @@ export function registerConnectionTools(mcp) {
         "Connect existing cards as parent → children. Works cross-board without extra steps (children may be on different boards than the parent). Optional boardId is ignored by the API (documentation only).",
       inputSchema: {
         parentCardId: z.string(),
-        childCardIds: z.array(z.string()),
+        childCardIds: z.array(z.string()).max(MAX_BULK_IDS),
         boardId: z.string().optional(),
       },
     },
@@ -174,11 +175,11 @@ export function registerConnectionTools(mcp) {
     {
       description: "Delete parent/child connections for one or more cards. Provide cardIds and optional connections object (e.g., { children: [ids], parents: [ids] }).",
       inputSchema: {
-        cardIds: z.array(z.string()),
+        cardIds: z.array(z.string()).max(MAX_BULK_IDS),
         connections: z
           .object({
-            children: z.array(z.string()).optional(),
-            parents: z.array(z.string()).optional(),
+            children: z.array(z.string()).max(MAX_BULK_IDS).optional(),
+            parents: z.array(z.string()).max(MAX_BULK_IDS).optional(),
           })
           .optional(),
       },

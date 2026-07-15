@@ -14,11 +14,12 @@ import {
   updateBoardCustomFieldsApi,
   exportBoardHistoryApi,
 } from "../api/agileplace.mjs";
+import { MAX_BULK_IDS, MAX_TAG_VALUES } from "../limits.mjs";
 
 const { DEFAULT_BOARD_ID } = CONFIG;
 const boardCustomFieldChoiceConfigurationSchema = z
   .object({
-    choices: z.array(z.string()).optional(),
+    choices: z.array(z.string()).max(MAX_TAG_VALUES).optional(),
   })
   .passthrough();
 
@@ -173,7 +174,7 @@ export function registerBoardTools(mcp) {
       description: "List boards. Supports optional search (title filter) and boards (filter by IDs). Returns id, title, description for each board.",
       inputSchema: {
         search: z.string().optional(),
-        boards: z.union([z.string(), z.array(z.string())]).optional(),
+        boards: z.union([z.string(), z.array(z.string()).max(MAX_BULK_IDS)]).optional(),
         limit: z.number().optional(),
       },
     },
@@ -228,7 +229,7 @@ export function registerBoardTools(mcp) {
     {
       description: "Archive multiple boards. Calls the archive endpoint for each board. Returns per-board success/failure.",
       inputSchema: {
-        boardIds: z.array(z.string()),
+        boardIds: z.array(z.string()).max(MAX_BULK_IDS),
       },
     },
     async ({ boardIds }) => {

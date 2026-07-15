@@ -117,15 +117,16 @@ async function withOkrAuth(fn) {
 }
 
 function okrErrorFromResponse(resp, operation, text) {
+  // Always go through fetchResponseError so bodies stay server-side only.
   if (resp.status === 401 || resp.status === 403) {
-    return new Error(
-      `${operation} failed: ${resp.status} ${resp.statusText} - Check OKR credentials permissions. ${text.slice(0, 200)}`
-    );
+    const err = fetchResponseError(resp, operation, text);
+    err.message = `${operation} failed: ${resp.status} ${resp.statusText} — check OKR credentials/permissions`;
+    return err;
   }
   if (resp.status === 429) {
-    return new Error(
-      `${operation} failed: ${resp.status} ${resp.statusText} - Rate limit exceeded. ${text.slice(0, 200)}`
-    );
+    const err = fetchResponseError(resp, operation, text);
+    err.message = `${operation} failed: ${resp.status} ${resp.statusText} — rate limit exceeded`;
+    return err;
   }
   return fetchResponseError(resp, operation, text);
 }

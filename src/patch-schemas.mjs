@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_TAG_VALUES } from "./limits.mjs";
 
 /** RFC 6902 `value` payloads allowed on AgilePlace card/board PATCH operations. */
 export const jsonPatchValueSchema = z.union([
@@ -6,7 +7,7 @@ export const jsonPatchValueSchema = z.union([
   z.number(),
   z.boolean(),
   z.null(),
-  z.array(z.string()),
+  z.array(z.string()).max(MAX_TAG_VALUES),
   z.record(z.string(), z.unknown()),
 ]);
 

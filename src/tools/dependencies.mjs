@@ -6,6 +6,7 @@ import {
   deleteCardDependencyApi,
   DEPENDENCY_TIMING_VALUES,
 } from "../api/agileplace.mjs";
+import { MAX_BULK_IDS } from "../limits.mjs";
 
 const dependencyTimingSchema = z.enum(DEPENDENCY_TIMING_VALUES);
 
@@ -40,7 +41,7 @@ export function registerDependencyTools(mcp) {
       description:
         "Update timing on one or more card dependencies (PATCH /io/card/dependency). Each update needs cardId, dependsOnCardId, and timing.",
       inputSchema: {
-        updates: z.array(dependencyUpdateSchema).min(1),
+        updates: z.array(dependencyUpdateSchema).min(1).max(MAX_BULK_IDS),
       },
     },
     wrapToolHandler("updateCardDependency", async ({ updates }) => {
@@ -58,10 +59,11 @@ export function registerDependencyTools(mcp) {
       description:
         "Remove dependency links between cards (DELETE /io/card/dependency). Unlinks each cardId from each dependsOnCardId in the cross product.",
       inputSchema: {
-        cardIds: z.array(z.string()).min(1).describe("Cards to unlink from dependencies"),
+        cardIds: z.array(z.string()).min(1).max(MAX_BULK_IDS).describe("Cards to unlink from dependencies"),
         dependsOnCardIds: z
           .array(z.string())
           .min(1)
+          .max(MAX_BULK_IDS)
           .describe("Dependency target cards to unlink from cardIds"),
       },
     },

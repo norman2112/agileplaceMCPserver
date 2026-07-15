@@ -8,6 +8,7 @@ import {
   applyScoringToCardsApi,
   deleteCardScoresApi,
 } from "../api/agileplace.mjs";
+import { MAX_BULK_IDS } from "../limits.mjs";
 
 export function registerScoringTools(mcp) {
   mcp.registerTool(
@@ -56,7 +57,7 @@ export function registerScoringTools(mcp) {
         boardId: z.string(),
         templateId: z.string(),
         templateVersion: z.string(),
-        cardIds: z.array(z.string()),
+        cardIds: z.array(z.string()).max(MAX_BULK_IDS),
       },
     },
     wrapToolHandler(
@@ -113,7 +114,7 @@ export function registerScoringTools(mcp) {
       description: "Apply staged scores to the actual cards so they appear on the board.",
       inputSchema: {
         boardId: z.string(),
-        cardIds: z.array(z.string()),
+        cardIds: z.array(z.string()).max(MAX_BULK_IDS),
       },
     },
     wrapToolHandler("applyScoringToCards", async ({ boardId, cardIds }) => {
@@ -130,7 +131,7 @@ export function registerScoringTools(mcp) {
       description: "Remove applied scores from the specified cards (DELETE with body).",
       inputSchema: {
         boardId: z.string(),
-        cardIds: z.array(z.string()),
+        cardIds: z.array(z.string()).max(MAX_BULK_IDS),
       },
     },
     wrapToolHandler("deleteCardScores", async ({ boardId, cardIds }) => {

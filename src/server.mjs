@@ -104,8 +104,9 @@ app.use((err, _req, res, _next) => {
 
 let healthServer;
 if (process.env.DISABLE_HEALTH_SERVER !== "1") {
-  healthServer = app.listen(PORT, () => {
-    console.error(`MCP server health endpoint listening on :${PORT}`);
+  // Bind localhost only — health exposes config caps, not for LAN exposure.
+  healthServer = app.listen(PORT, "127.0.0.1", () => {
+    console.error(`MCP server health endpoint listening on 127.0.0.1:${PORT}`);
   });
 
   healthServer.on("error", err => {

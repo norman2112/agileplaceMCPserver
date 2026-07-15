@@ -35,7 +35,7 @@ export function registerAttachmentTools(mcp) {
     "createAttachment",
     {
       description:
-        "Upload an attachment to a card. Uses multipart/form-data (FormData/Blob). fileContent is UTF-8 text by default; use contentEncoding base64 for binary (e.g. PNG). fileName must not contain quotes or newlines.",
+        "Upload an attachment to a card. Uses multipart/form-data (FormData/Blob). fileContent is UTF-8 text by default; use contentEncoding base64 for binary (e.g. PNG). fileName must not contain quotes or newlines. Max decoded size 10 MiB.",
       inputSchema: {
         cardId: z.string(),
         fileName: z.string(),

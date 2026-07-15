@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_BULK_IDS } from "./limits.mjs";
 
 /** PATCH /io/series/:seriesId — per markdown/apiDocs.md (Update an existing planning series). */
 export const planningSeriesUpdateSchema = z
@@ -6,7 +7,7 @@ export const planningSeriesUpdateSchema = z
     label: z.string().optional(),
     timeZone: z.string().optional(),
     allowAllBoards: z.boolean().optional(),
-    boardIds: z.array(z.string()).optional(),
+    boardIds: z.array(z.string()).max(MAX_BULK_IDS).optional(),
   })
   .strict()
   .refine(v => Object.keys(v).length > 0, {

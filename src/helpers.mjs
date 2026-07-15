@@ -109,11 +109,22 @@ export async function fetchWithTimeout(url, opts = {}, ms = FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try {
-    return await fetch(url, { ...opts, signal: controller.signal });
+    // Never follow redirects with Bearer credentials — reject 3xx explicitly.
+    const resp = await fetch(url, { ...opts, redirect: "manual", signal: controller.signal });
+    if (resp.status >= 300 && resp.status < 400) {
+      const location = resp.headers.get("location") || "(none)";
+      throw new Error(
+        `Unexpected redirect (${resp.status}) — refusing to follow with credentials. Location: ${location}`
+      );
+    }
+    return resp;
   } catch (err) {
     const name = err?.name ? String(err.name) : "";
     if (name === "AbortError") {
       throw new Error(`Request timed out after ${ms}ms for ${url}`, { cause: err });
+    }
+    if (typeof err?.message === "string" && err.message.startsWith("Unexpected redirect")) {
+      throw err;
     }
     throw new Error(`Request failed for ${url}: ${err?.message || err}`, { cause: err });
   } finally {

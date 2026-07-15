@@ -29,6 +29,7 @@ import {
 } from "../api/agileplace.mjs";
 import { resolveLaneId, getDefaultDropLaneId } from "../lane-utils.mjs";
 import { jsonPatchValueSchema } from "../patch-schemas.mjs";
+import { MAX_BULK_IDS, MAX_TAG_VALUES } from "../limits.mjs";
 
 const cardPrioritySchema = z.enum(CARD_PRIORITY_VALUES);
 
@@ -573,7 +574,7 @@ export function registerCardTools(mcp) {
           .array(
             z.object({
               parentCardId: z.string(),
-              childCardIds: z.array(z.string()).min(1),
+              childCardIds: z.array(z.string()).min(1).max(MAX_BULK_IDS),
             })
           )
           .optional()
@@ -791,7 +792,7 @@ export function registerCardTools(mcp) {
         fields: z.array(
           z.object({
             fieldId: z.string().min(1),
-            value: z.union([z.string(), z.number(), z.null(), z.array(z.string())]),
+            value: z.union([z.string(), z.number(), z.null(), z.array(z.string()).max(MAX_TAG_VALUES)]),
           })
         ).min(1),
       },
@@ -1057,7 +1058,7 @@ export function registerCardTools(mcp) {
         "dryRun validates payload only (does not call API).",
       ].join(" "),
       inputSchema: {
-        cardIds: z.array(z.string()),
+        cardIds: z.array(z.string()).max(MAX_BULK_IDS),
         updates: z.array(z.object({
           op: z.enum(["replace", "add", "remove"]),
           path: z.string(),
@@ -1133,7 +1134,7 @@ export function registerCardTools(mcp) {
       description:
         "Move many cards to the same lane. Parallel by default; atomic=true stops on first failure (already-moved cards are not rolled back). wipOverrideReason for WIP limit overrides. Use laneName + boardId instead of laneId.",
       inputSchema: {
-        cardIds: z.array(z.string()).min(1),
+        cardIds: z.array(z.string()).min(1).max(MAX_BULK_IDS),
         laneId: z.string().optional(),
         laneName: z.string().optional(),
         boardId: z.string().optional(),
@@ -1158,7 +1159,7 @@ export function registerCardTools(mcp) {
       description:
         "Assign many cards to the same planning increment. PATCHes each card with a JSON Patch add to /planningIncrementIds/- (concurrency 5).",
       inputSchema: {
-        cardIds: z.array(z.string()).min(1),
+        cardIds: z.array(z.string()).min(1).max(MAX_BULK_IDS),
         incrementId: z.string(),
       },
     },
@@ -1219,7 +1220,7 @@ export function registerCardTools(mcp) {
     {
       description: "Delete multiple cards in one call. All cards must be on the same board. Board setting 'Allow users to delete cards' must be enabled.",
       inputSchema: {
-        cardIds: z.array(z.string()),
+        cardIds: z.array(z.string()).max(MAX_BULK_IDS),
       },
     },
     wrapToolHandler("batchDeleteCards", async ({ cardIds }) => {
@@ -1234,8 +1235,8 @@ export function registerCardTools(mcp) {
     {
       description: "Assign one or more users to one or more cards using the native assign endpoint.",
       inputSchema: {
-        cardIds: z.array(z.string()),
-        userIds: z.array(z.string()),
+        cardIds: z.array(z.string()).max(MAX_BULK_IDS),
+        userIds: z.array(z.string()).max(MAX_BULK_IDS),
       },
     },
     wrapToolHandler("assignUsersToCards", async ({ cardIds, userIds }) => {
@@ -1255,7 +1256,7 @@ export function registerCardTools(mcp) {
       inputSchema: {
         search: z.string(),
         boardId: z.string().optional(),
-        boardIds: z.array(z.string()).optional(),
+        boardIds: z.array(z.string()).max(MAX_BULK_IDS).optional(),
         limit: z.number().int().min(1).max(500).optional(),
         offset: z.number().int().min(0).optional(),
       },
@@ -1297,7 +1298,7 @@ export function registerCardTools(mcp) {
         "Spread cardIds across lanes by percentage weights (e.g. 30/25/25/20). Percentages should sum to ~100. Resolves laneName per slot when laneId omitted.",
       inputSchema: {
         boardId: z.string(),
-        cardIds: z.array(z.string()).min(1),
+        cardIds: z.array(z.string()).min(1).max(MAX_BULK_IDS),
         distribution: z.array(
           z.object({
             laneId: z.string().optional(),

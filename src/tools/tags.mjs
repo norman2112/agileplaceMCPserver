@@ -7,6 +7,7 @@ import {
   setCardTags as setCardTagsApi,
   listCards,
 } from "../api/agileplace.mjs";
+import { MAX_TAG_VALUES } from "../limits.mjs";
 
 const { DEFAULT_BOARD_ID } = CONFIG;
 
@@ -53,7 +54,7 @@ export function registerTagTools(mcp) {
         "APPENDS tags to a card without removing existing tags. Duplicates are deduped. Uses JSON Patch add on /tags/-.",
       inputSchema: {
         cardId: z.string(),
-        tags: z.array(z.string()),
+        tags: z.array(z.string()).max(MAX_TAG_VALUES),
       },
     },
     wrapToolHandler("addCardTags", async ({ cardId, tags }) => {
@@ -73,7 +74,7 @@ export function registerTagTools(mcp) {
         "Removes specified tags from a card. Other tags are preserved. Uses JSON Patch remove for each tag value.",
       inputSchema: {
         cardId: z.string(),
-        tags: z.array(z.string()),
+        tags: z.array(z.string()).max(MAX_TAG_VALUES),
       },
     },
     wrapToolHandler("removeCardTags", async ({ cardId, tags }) => {
@@ -93,7 +94,7 @@ export function registerTagTools(mcp) {
         "REPLACES all tags on a card with the provided list. Any existing tags not in the new list are removed. For additive changes use addCardTags; to drop specific tags use removeCardTags.",
       inputSchema: {
         cardId: z.string(),
-        tags: z.array(z.string()),
+        tags: z.array(z.string()).max(MAX_TAG_VALUES),
       },
     },
     wrapToolHandler("setCardTags", async ({ cardId, tags }) => {
@@ -115,7 +116,7 @@ export function registerTagTools(mcp) {
         updates: z.array(
           z.object({
             cardId: z.string(),
-            tags: z.array(z.string()),
+            tags: z.array(z.string()).max(MAX_TAG_VALUES),
           })
         ),
       },
@@ -160,7 +161,7 @@ export function registerTagTools(mcp) {
         updates: z.array(
           z.object({
             cardId: z.string(),
-            tags: z.array(z.string()),
+            tags: z.array(z.string()).max(MAX_TAG_VALUES),
           })
         ),
       },
@@ -205,7 +206,7 @@ export function registerTagTools(mcp) {
         updates: z.array(
           z.object({
             cardId: z.string(),
-            tags: z.array(z.string()),
+            tags: z.array(z.string()).max(MAX_TAG_VALUES),
           })
         ),
       },

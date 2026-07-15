@@ -1,6 +1,7 @@
 import { CONFIG } from "../config.mjs";
 import { fetchWithTimeout, stripHtml } from "../helpers.mjs";
 import { getActiveAccountConfig } from "../account-context.mjs";
+import { MAX_ATTACHMENT_BYTES } from "../limits.mjs";
 
 const { DEFAULT_BOARD_ID, MAX_DESC } = CONFIG;
 
@@ -56,13 +57,25 @@ export function normalizeBoardId(value) {
   return str.length > 0 ? str : undefined;
 }
 
-export function formatFetchError(resp, context, rawText) {
-  const msg = (rawText || "").replace(/<[^>]+>/g, "").slice(0, 500);
-  return `${context} failed: ${resp.status} ${resp.statusText} = ${msg}`;
+/** Client-facing error message — status only; never forward upstream response bodies. */
+export function formatFetchError(resp, context, _rawText) {
+  return `${context} failed: ${resp.status} ${resp.statusText}`;
 }
 
 /** Error with HTTP status from a failed fetch response (use instead of `new Error(formatFetchError(...))`). */
 export function fetchResponseError(resp, context, rawText) {
+  const stripped = String(rawText || "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (stripped) {
+    // Log upstream body server-side only (redact common secret-like substrings).
+    const forLog = stripped
+      .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "$1[REDACTED]")
+      .replace(/(password|token|secret|authorization)\s*[:=]\s*\S+/gi, "$1=[REDACTED]")
+      .slice(0, 1000);
+    console.error(`[${new Date().toISOString()}] API body (${context}): ${forLog}`);
+  }
   const err = new Error(formatFetchError(resp, context, rawText));
   err.statusCode = resp.status;
   return err;
@@ -1944,6 +1957,15 @@ function attachmentBytes(fileContent, contentEncoding = "utf8") {
   return Buffer.from(fileContent, "utf8");
 }
 
+export function assertAttachmentWithinLimit(bytes) {
+  const len = bytes?.length ?? 0;
+  if (len > MAX_ATTACHMENT_BYTES) {
+    throw new Error(
+      `Attachment exceeds maximum size of ${MAX_ATTACHMENT_BYTES} bytes (got ${len}).`
+    );
+  }
+}
+
 export async function createAttachmentApi(
   cardId,
   fileName,
@@ -1954,6 +1976,7 @@ export async function createAttachmentApi(
   assertValidAttachmentFileName(fileName);
   const ioPath = getIoPath();
   const bytes = attachmentBytes(fileContent, contentEncoding);
+  assertAttachmentWithinLimit(bytes);
   const form = new FormData();
   if (description !== undefined && description !== null && description !== "") {
     form.append("description", String(description));

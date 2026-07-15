@@ -18,6 +18,7 @@ import {
   deleteIncrementApi,
   getIncrementStatusApi,
 } from "../api/agileplace.mjs";
+import { MAX_BULK_IDS } from "../limits.mjs";
 
 function addDays(isoDate, days) {
   const d = new Date(`${isoDate}T12:00:00Z`);
@@ -47,7 +48,7 @@ export function registerPlanningTools(mcp) {
         label: z.string(),
         timeZone: z.string().optional(),
         allowAllBoards: z.boolean().optional(),
-        boardIds: z.array(z.string()).optional(),
+        boardIds: z.array(z.string()).max(MAX_BULK_IDS).optional(),
       },
     },
     wrapToolHandler("createPlanningSeries", async args => {
@@ -93,7 +94,7 @@ export function registerPlanningTools(mcp) {
         "Append board IDs to a planning series (GET current boardIds, merge, PATCH with up to 3 retries on concurrent edits). A narrow race window remains if two callers PATCH the same series simultaneously — prefer serializing updates per seriesId. Safer than updatePlanningSeries with a partial boardIds list.",
       inputSchema: {
         seriesId: z.string(),
-        boardIds: z.array(z.string()).min(1),
+        boardIds: z.array(z.string()).min(1).max(MAX_BULK_IDS),
       },
     },
     wrapToolHandler("addBoardsToPlanningSeries", async ({ seriesId, boardIds }) => {
